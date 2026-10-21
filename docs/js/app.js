@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.2.0';
+  var APP_VERSION = '1.2.1';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -872,6 +872,8 @@
         : '<button class="btn block" data-action="demo-on">サンプルデータで試す（この端末だけ）</button>') +
       (hasSample && !config.demo ? '<div style="height:10px"></div><button class="btn danger block" data-action="remove-samples">サンプルの株と記録を削除する</button>' : '') +
       '</section>' +
+      '<section class="panel"><h2>アプリの更新</h2><p class="small">画面が新しくならないときに押してください。記録のデータは消えません。</p>' +
+      '<button class="btn block" data-action="force-update">最新版に更新する</button></section>' +
       '<p class="small" style="text-align:center">ビカクログ ver.' + APP_VERSION + '</p></main>';
     app.innerHTML = html;
   }
@@ -985,6 +987,11 @@
         break;
       }
       case 'settings-save': settingsSave(); break;
+      case 'force-update':
+        if (state.outbox.length && !confirm('未送信の記録が ' + state.outbox.length + '件あります。端末には残るので、そのまま更新して大丈夫です。更新しますか？')) break;
+        toast('最新版を読み込んでいます…');
+        forceUpdate();
+        break;
       case 'full-reload':
         if (!confirm('サーバーから全データを読み直します。よろしいですか？（未送信の記録は消えません）')) break;
         sync(true).then(function () { toast(syncError ? '読み直せませんでした' : '読み直しました'); render(); });
@@ -1052,7 +1059,27 @@
   setInterval(function () { if (document.visibilityState === 'visible') sync(); }, SYNC_INTERVAL);
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch(function () { /* オフライン機能なしでも動きます */ });
+    // 新しい版に切り替わったら、入力中でなければ1回だけ読み込み直す
+    var hadController = !!navigator.serviceWorker.controller;
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController || reloaded || isEditing()) return;
+      reloaded = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') reg.update().catch(function () {});
+      });
+    }).catch(function () { /* オフライン機能なしでも動きます */ });
+  }
+
+  /** 保存済みの画面ファイルを消して、最新版を読み込み直す（記録のデータは消えません） */
+  function forceUpdate() {
+    var jobs = [];
+    if (window.caches) jobs.push(caches.keys().then(function (keys) { return Promise.all(keys.map(function (k) { return caches.delete(k); })); }));
+    if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) { return Promise.all(regs.map(function (r) { return r.unregister(); })); }));
+    Promise.all(jobs).catch(function () {}).then(function () { location.reload(); });
   }
 
   loadState();
