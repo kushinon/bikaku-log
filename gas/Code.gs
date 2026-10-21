@@ -376,6 +376,9 @@ var BikakuShared = (function () {
     unknown: { label: '記録が足りません', order: 3 }
   };
 
+  // メモにこの言葉がある記録より前は、判定に使わない（株の重さが大きく変わるため）
+  var RESET_RE = /仕立て直し|仕立直し|仕立て替え|植え替え|植替え|板替え|付け替え|付替え/;
+
   function toNumber(v) {
     if (v === null || v === undefined || v === '') return null;
     var n = Number(v);
@@ -451,7 +454,10 @@ var BikakuShared = (function () {
    */
   function judgePlant(plant, logs, now) {
     now = now || Date.now();
-    var sorted = plantLogs(plant.id, logs);
+    var all = plantLogs(plant.id, logs);
+    var resetIdx = -1;
+    all.forEach(function (l, i) { if (l.memo && RESET_RE.test(l.memo)) resetIdx = i; });
+    var sorted = resetIdx > 0 ? all.slice(resetIdx) : all;
     var auto = autoTarget(sorted);
     var manual = toNumber(plant.targetWeight);
     var target = manual !== null && manual > 0 ? manual : auto;
@@ -466,6 +472,7 @@ var BikakuShared = (function () {
       predictedAt: null,
       daysLeft: null,
       lastWateredAt: null,
+      resetAt: resetIdx > 0 ? all[resetIdx].at : null,
       note: ''
     };
 
@@ -657,6 +664,7 @@ var BikakuShared = (function () {
 
   return {
     CONFIG: CONFIG,
+    RESET_RE: RESET_RE,
     KINDS: KINDS,
     STYLES: STYLES,
     STATUS: STATUS,

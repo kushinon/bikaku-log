@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.1.0';
+  var APP_VERSION = '1.2.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -371,9 +371,11 @@
         return '<button role="radio" aria-checked="' + (ws.kind === k) + '" class="' + (ws.kind === k ? 'active' : '') + '" data-kind="' + k + '">' +
           (k === 'regular' ? 'ふだん' : S.KINDS[k]) + '</button>';
       }).join('') + '</div>' +
-      '<details class="more"' + (ws.at || ws.memo ? ' open' : '') + '><summary>日時・メモを変更 ▾</summary>' +
+      '<details class="more"' + (ws.at || ws.memo || ws.reset ? ' open' : '') + '><summary>日時・メモ・仕立て直し ▾</summary>' +
       '<div class="field"><label for="w-at">日時</label><input class="input" type="datetime-local" id="w-at" value="' + toLocalInput(ws.at || Date.now()) + '"></div>' +
       '<div class="field"><label for="w-memo">メモ</label><input class="input" id="w-memo" value="' + h(ws.memo) + '" placeholder="例：ソーキング、液肥"></div>' +
+      '<label class="imp-check" style="margin-bottom:8px"><input type="checkbox" id="w-reset"' + (ws.reset ? ' checked' : '') + '>' +
+      '<span>仕立て直し・植え替えをした<br><small class="small">これより前の記録は水やり判定に使わなくなります</small></span></label>' +
       '</details>' +
       '<div class="keypad">' + ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'del'].map(function (k) {
         return '<button class="key ' + (k === 'del' || k === '.' ? 'fn' : '') + '" data-key="' + k + '" aria-label="' + (k === 'del' ? '1文字消す' : k) + '">' + (k === 'del' ? '⌫' : k) + '</button>';
@@ -385,6 +387,7 @@
     if (chip && chip.scrollIntoView) chip.scrollIntoView({ inline: 'center', block: 'nearest' });
     $('#w-at').addEventListener('change', function (e) { ws.at = fromLocalInput(e.target.value); });
     $('#w-memo').addEventListener('input', function (e) { ws.memo = e.target.value; });
+    $('#w-reset').addEventListener('change', function (e) { ws.reset = e.target.checked; });
     updateWeighDisplay(j);
   }
 
@@ -424,7 +427,7 @@
     if (!(isFinite(v) && v > 0)) return;
     put('logs', {
       id: uuid(), plantId: ws.plantId, at: ws.at || Date.now(), weight: Math.round(v * 10) / 10,
-      kind: ws.kind, memo: ws.memo || '', deleted: false
+      kind: ws.kind, memo: ws.reset && !S.RESET_RE.test(ws.memo || '') ? ['仕立て直し', ws.memo].filter(Boolean).join('・') : (ws.memo || ''), deleted: false
     });
     var plant = state.plants[ws.plantId];
     if (ws.kind === 'before') {
@@ -466,6 +469,7 @@
       '<dt>減り方</dt><dd>' + (j.ratePerDay !== null ? '1日あたり 約' + j.ratePerDay + 'g <small class="small">' + (j.rateSource === 'recent' ? '直近の記録から' : '過去の平均から') + '</small>' : '—') + '</dd>' +
       '<dt>前回の水やり</dt><dd>' + (j.lastWateredAt ? h(fmtDateTime(j.lastWateredAt)) : '—') + '</dd>' +
       '</dl>' + (j.note ? '<div class="note">' + h(j.note) + '</div>' : '') +
+      (j.resetAt ? '<div class="note">' + h(fmtDate(j.resetAt)) + ' の仕立て直し・植え替えより前の記録は、判定に使っていません。</div>' : '') +
       '<div class="target-edit"><input class="input" id="target-input" inputmode="decimal" placeholder="目安重量を手動で設定（g）" value="' + h(p.targetWeight === null || p.targetWeight === undefined ? '' : p.targetWeight) + '">' +
       '<button class="btn small primary" data-action="target-save">設定</button>' +
       (j.targetSource === 'manual' ? '<button class="btn small" data-action="target-clear">自動に戻す</button>' : '') + '</div>' +

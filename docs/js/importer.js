@@ -13,6 +13,7 @@ var BikakuImporter = (function () {
 
   var HOUR = 60 * 60 * 1000;
   var BEFORE_WINDOW = 6 * HOUR;   // 水やり後の直前、この時間以内の軽い記録は「水やり前」とみなす
+  var JUMP_RATIO = 1.1;           // 前の記録より1割以上重くなっていたら、水やりしたとみなす
 
   /** 全角の数字・記号を半角にそろえる */
   function normalize(s) {
@@ -28,7 +29,7 @@ var BikakuImporter = (function () {
   function guessKind(memo) {
     if (!memo) return null;
     if (/水やり前|潅水前|灌水前/.test(memo)) return 'before';
-    if (/水やり|潅水|灌水|ソーキング|水を?あげ/.test(memo)) return 'after';
+    if (/水やり|潅水|灌水|ソーキング|水を?あげ|満水/.test(memo)) return 'after';
     return null;
   }
 
@@ -101,9 +102,18 @@ var BikakuImporter = (function () {
       }
     });
 
-    // 水やり後の直前の軽い記録は「水やり前」とみなす
+    // 種別が書かれていない記録で、前より1割以上重くなっていたら「水やり後」とみなす
     merged.forEach(function (e, i) {
       e.kindGuessed = false;
+      var prev = merged[i - 1];
+      if (!e.kind && prev && e.weight >= prev.weight * JUMP_RATIO) {
+        e.kind = 'after';
+        e.kindGuessed = true;
+      }
+    });
+
+    // 水やり後の直前の軽い記録は「水やり前」とみなす
+    merged.forEach(function (e, i) {
       if (e.kind) return;
       var next = merged[i + 1];
       if (next && next.kind === 'after' && next.at - e.at <= BEFORE_WINDOW && next.weight > e.weight) {
