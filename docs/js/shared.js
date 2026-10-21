@@ -17,7 +17,7 @@ var BikakuShared = (function () {
     SOON_DAYS: 2,          // 予定日までこの日数以内なら「もうすぐ」
     SOON_MARGIN: 0.05,     // 目安重量の +5% 以内なら「もうすぐ」
     TARGET_SAMPLES: 5,     // 目安重量の算出に使う「水やり前」記録の件数（新しい順）
-    MIN_SPAN_HOURS: 12,    // 減り方の計算に必要な最短の記録期間
+    MIN_SPAN_HOURS: 6,     // 減り方の計算に必要な最短の記録期間
     HISTORY_CYCLES: 3      // 予測の補助に使う過去の水やりサイクル数
   };
 
@@ -161,12 +161,16 @@ var BikakuShared = (function () {
       }
     }
 
-    var rate = dryingRate(segment);
+    // 水やり直後は余分な水が抜けて急に軽くなるため、「水やり後」の点は除いて減り方を計算する。
+    // 足りなければ過去のサイクルの平均、それもなければ水やり後の点も含めて計算する
+    var drying = segment.length && segment[0].kind === 'after' ? segment.slice(1) : segment;
+    var rate = dryingRate(drying);
     if (rate !== null) {
       r.rateSource = 'recent';
     } else {
       rate = historicalRate(sorted);
       if (rate !== null) r.rateSource = 'history';
+      else if ((rate = dryingRate(segment)) !== null) r.rateSource = 'recent';
     }
     r.ratePerDay = rate !== null ? Math.round(rate * 10) / 10 : null;
 

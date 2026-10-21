@@ -308,3 +308,16 @@ textarea.input { min-height: 96px; resize: vertical; }
   .weigh { max-width: 480px; margin: 0 auto; min-height: auto; }
   .key { min-height: 56px; }
 }
+
+/* ---------- 取り込み ---------- */
+.imp-list { list-style: none; padding: 0; margin: 0 0 14px; }
+.imp-list li { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding: 6px 0; }
+.imp-list li:first-child { border-top: 0; }
+.imp-list li.off .imp-main { opacity: .45; }
+.imp-check { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 48px; cursor: pointer; }
+.imp-check input { width: 24px; height: 24px; flex-shrink: 0; accent-color: var(--primary); }
+.imp-main { min-width: 0; font-variant-numeric: tabular-nums; }
+.imp-main b { font-size: 18px; }
+.imp-date { color: var(--text-2); font-size: 15px; }
+.imp-main small { display: block; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.imp-kind { min-height: 44px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--surface); padding: 0 8px; font-size: 15px; flex-shrink: 0; }

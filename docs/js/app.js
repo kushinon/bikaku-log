@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.0.0';
+  var APP_VERSION = '1.1.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -119,7 +119,7 @@
   }
 
   /** 変更を端末に保存して、未送信リストに積む */
-  function put(table, record) {
+  function put(table, record, defer) {
     record.updatedAt = Math.max(Date.now(), (record.updatedAt || 0) + 1);
     state[table][record.id] = record;
     if (!config.demo) {
@@ -129,6 +129,7 @@
       });
       state.outbox.push({ opId: uuid(), table: table, record: record });
     }
+    if (defer) return;   // まとめて保存するときは、呼び出し側で最後に1回だけ保存する
     saveState();
     scheduleSync(800);
   }
@@ -239,7 +240,7 @@
 
   function isEditing() {
     var r = currentRoute();
-    return r.name === 'edit' || r.name === 'weigh' || r.name === 'log' || r.name === 'settings';
+    return r.name === 'edit' || r.name === 'weigh' || r.name === 'log' || r.name === 'settings' || r.name === 'import';
   }
 
   function syncInfo() {
@@ -277,7 +278,7 @@
   function render() {
     var r = currentRoute();
     if (!config.demo && !isConfigured() && r.name !== 'settings') r = { name: 'welcome' };
-    var views = { home: viewHome, plant: viewPlant, weigh: viewWeigh, edit: viewEdit, log: viewLog, settings: viewSettings, welcome: viewWelcome };
+    var views = { home: viewHome, plant: viewPlant, weigh: viewWeigh, edit: viewEdit, log: viewLog, settings: viewSettings, welcome: viewWelcome, import: viewImport };
     (views[r.name] || viewHome)(r.id);
   }
 
@@ -492,6 +493,7 @@
         '<span class="kind ' + h(l.kind) + '">' + h(S.KINDS[l.kind] || l.kind) + '</span></button></li>';
     }).join('') + '</ul>';
     if (recent.length > viewState.logLimit) html += '<button class="btn ghost block" data-action="more-logs">もっと見る</button>';
+    html += '<button class="btn ghost block" data-go="import/' + h(encodeURIComponent(p.id)) + '">メモからまとめて取り込む</button>';
     html += '</section>';
     if (p.memo) html += '<section class="panel"><h2>メモ</h2><div class="memo">' + h(p.memo) + '</div></section>';
     html += '</main>';
@@ -747,6 +749,103 @@
     return parts.join('<br>');
   }
 
+  // ----- メモからまとめて取り込む -----
+  var importState = null;
+
+  function sameMinute(a, b) { return Math.floor(a / 60000) === Math.floor(b / 60000); }
+
+  /** 読み取った記録に「すでに登録済み」の印をつける */
+  function markExisting() {
+    var is = importState;
+    var existing = S.plantLogs(is.plantId, logsList());
+    is.entries.forEach(function (e) {
+      e.exists = existing.some(function (l) { return sameMinute(l.at, e.at) && Math.abs(l.weight - e.weight) < 0.05; });
+      e.checked = !e.exists;
+    });
+  }
+
+  function viewImport(id) {
+    var plants = plantsList().sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'ja'); });
+    if (!plants.length) { toast('先に株を登録してください'); go('edit/new'); return; }
+    if (!importState) importState = { plantId: '', text: '', entries: null, skipped: [] };
+    var is = importState;
+    if (id && state.plants[id] && !is.plantId) is.plantId = id;
+    if (!state.plants[is.plantId] || state.plants[is.plantId].deleted) is.plantId = plants[0].id;
+
+    var html = topbar('メモから取り込む', { back: true, sync: false }) + '<main>' +
+      '<p class="small" style="font-size:16px">Google Keep などに書いた計量のメモを、そのまま貼り付けてください。日時と重さを読み取って、まとめて記録します。</p>' +
+      '<div class="field"><label for="imp-plant">取り込む株</label><select class="input" id="imp-plant">' +
+      plants.map(function (p) { return '<option value="' + h(p.id) + '"' + (p.id === is.plantId ? ' selected' : '') + '>' + h(p.name || '(名前なし)') + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="field"><label for="imp-text">メモ</label><textarea class="input" id="imp-text" rows="9" placeholder="例）&#10;• 9/18 21:48: 304g&#10;• 9/18 22:30: 636g (水やり後)&#10;• 9/19 08:27: 600g">' + h(is.text) + '</textarea>' +
+      '<div class="hint">1行に「日付 時刻 重さ」があれば読み取れます。（ ）の中はメモになり、「水やり」と書いてあれば「水やり後」になります。年がない日付は今年（未来になる場合は去年）とみなします。</div></div>' +
+      '<button class="btn primary block" data-action="import-parse">読み取る</button>';
+
+    if (is.entries) {
+      var n = is.entries.filter(function (e) { return e.checked; }).length;
+      var nExists = is.entries.filter(function (e) { return e.exists; }).length;
+      var nDup = is.entries.reduce(function (a, e) { return a + (e.duplicates || 0); }, 0);
+      html += '<section class="panel" style="margin-top:16px"><h2>読み取り結果（' + is.entries.length + '件）</h2>';
+      var notes = [];
+      if (nDup) notes.push('同じ日時・同じ重さの行 ' + nDup + '件を1件にまとめました。');
+      if (nExists) notes.push('すでに登録済みの ' + nExists + '件はチェックを外しています。');
+      if (is.entries.some(function (e) { return e.kindGuessed; })) notes.push('「水やり後」の直前の記録は「水やり前」にしています（※印）。');
+      notes.push('種別は右の欄で直せます。取り込まない行はチェックを外してください。');
+      html += '<p class="small">' + notes.map(h).join('<br>') + '</p>';
+      if (!is.entries.length) html += '<p class="msg err">日時と重さを読み取れませんでした。書き方を確認してください。</p>';
+      html += '<ul class="imp-list">' + is.entries.map(function (e, i) {
+        return '<li class="' + (e.checked ? '' : 'off') + '"><label class="imp-check"><input type="checkbox" data-imp-check="' + i + '"' + (e.checked ? ' checked' : '') + '>' +
+          '<span class="imp-main"><b>' + fmtWeight(e.weight) + '</b> <span class="imp-date">' + h(fmtDateTime(e.at)) + '</span>' +
+          (e.exists ? ' <span class="kind regular">登録済み</span>' : '') +
+          (e.memo ? '<small>' + h(e.memo) + '</small>' : '') + '</span></label>' +
+          '<select class="imp-kind" data-imp-kind="' + i + '" aria-label="種別">' + ['before', 'after', 'regular'].map(function (k) {
+            return '<option value="' + k + '"' + (e.kind === k ? ' selected' : '') + '>' + (k === 'regular' ? 'ふだん' : S.KINDS[k]) + (e.kindGuessed && e.kind === k ? '※' : '') + '</option>';
+          }).join('') + '</select></li>';
+      }).join('') + '</ul>';
+      if (is.skipped.length) {
+        html += '<details class="more" style="text-align:left"><summary style="text-align:left">読み取れなかった行（' + is.skipped.length + '件）▾</summary><pre class="small" style="white-space:pre-wrap">' + h(is.skipped.join('\n')) + '</pre></details>';
+      }
+      html += '<button class="btn primary block" data-action="import-run"' + (n ? '' : ' disabled') + '>' + n + '件を「' + h(state.plants[is.plantId].name) + '」に取り込む</button></section>';
+    }
+    html += '</main>';
+    app.innerHTML = html;
+
+    $('#imp-text').addEventListener('input', function (e) { is.text = e.target.value; });
+    $('#imp-plant').addEventListener('change', function (e) {
+      is.plantId = e.target.value;
+      if (is.entries) markExisting();
+      viewImport();
+    });
+  }
+
+  function importParse() {
+    var is = importState;
+    is.text = $('#imp-text').value;
+    if (!is.text.trim()) { toast('メモを貼り付けてください'); return; }
+    var result = BikakuImporter.parse(is.text, Date.now());
+    is.entries = result.entries;
+    is.skipped = result.skipped;
+    markExisting();
+    viewImport();
+    var panel = $('.imp-list') || $('.msg.err');
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function importRun() {
+    var is = importState;
+    var list = is.entries.filter(function (e) { return e.checked; });
+    if (!list.length) return;
+    list.forEach(function (e) {
+      put('logs', { id: uuid(), plantId: is.plantId, at: e.at, weight: e.weight, kind: e.kind, memo: e.memo || '', deleted: false }, true);
+    });
+    saveState();
+    scheduleSync(300);
+    var plantId = is.plantId;
+    importState = null;
+    toast(list.length + '件を取り込みました');
+    location.replace('#/plant/' + encodeURIComponent(plantId));
+  }
+
   function viewSettings() {
     var hasSample = plantsList().some(function (p) { return String(p.id).indexOf('sample-') === 0; });
     var html = topbar('設定', { back: true }) + '<main>' +
@@ -757,6 +856,8 @@
       '<div class="hint">URLと合言葉はこの端末の中だけに保存されます。</div></div>' +
       '<button class="btn primary block" data-action="settings-save">接続して保存</button>' +
       '<div id="s-msg"></div></section>' +
+      '<section class="panel"><h2>記録の取り込み</h2><p class="small">Google Keep などのメモに書いた過去の計量記録を、まとめて取り込めます。</p>' +
+      '<button class="btn block" data-go="import/">メモからまとめて取り込む</button></section>' +
       '<section class="panel"><h2>同期</h2><p id="sync-status" class="small" style="font-size:16px">' + syncStatusText() + '</p>' +
       '<div class="stack"><button class="btn block" data-action="sync-now"' + (config.demo ? ' disabled' : '') + '>今すぐ同期</button>' +
       '<button class="btn block" data-action="full-reload"' + (config.demo || !isConfigured() ? ' disabled' : '') + '>サーバーから全データを読み直す</button></div>' +
@@ -808,6 +909,7 @@
       if (to.indexOf('weigh/') === 0) weighState = null;
       if (to.indexOf('edit/') === 0) editDraft = null;
       if (to.indexOf('plant/') === 0) viewState.logLimit = 20;
+      if (to.indexOf('import/') === 0) importState = null;
       go(to);
       return;
     }
@@ -855,6 +957,8 @@
         break;
       }
       case 'more-logs': viewState.logLimit += 50; render(); break;
+      case 'import-parse': importParse(); break;
+      case 'import-run': importRun(); break;
       case 'photo-clear': readForm(); editDraft.photo = ''; viewEdit(r.id); break;
       case 'plant-delete': {
         var p3 = state.plants[r.id];
@@ -895,6 +999,20 @@
         toast('サンプルを削除しました'); render();
         break;
       }
+    }
+  });
+
+  // 取り込み画面のチェックと種別の変更
+  document.addEventListener('change', function (e) {
+    if (!importState || !importState.entries) return;
+    var t = e.target;
+    if (t.hasAttribute('data-imp-check')) {
+      importState.entries[Number(t.getAttribute('data-imp-check'))].checked = t.checked;
+      viewImport();
+    } else if (t.hasAttribute('data-imp-kind')) {
+      var en = importState.entries[Number(t.getAttribute('data-imp-kind'))];
+      en.kind = t.value;
+      en.kindGuessed = false;
     }
   });
 

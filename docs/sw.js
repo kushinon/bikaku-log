@@ -1,12 +1,13 @@
 // ビカクログ オフライン用のサービスワーカー
 // 画面のファイルを端末に保存して、電波がなくてもアプリを開けるようにします。
 // ファイルを更新したら CACHE の番号を上げてください。
-var CACHE = 'bikaku-v1';
+var CACHE = 'bikaku-v2';
 var FILES = [
   './',
   'index.html',
   'css/style.css',
   'js/shared.js',
+  'js/importer.js',
   'js/app.js',
   'manifest.webmanifest',
   'icons/icon.svg',
