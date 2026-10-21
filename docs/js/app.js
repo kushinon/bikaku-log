@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.2.2';
+  var APP_VERSION = '1.2.3';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -625,7 +625,7 @@
       (d.photo ? '<button type="button" class="btn ghost small" data-action="photo-clear">写真を外す</button>' : '') + '</div>' +
       '<div class="field"><label for="f-name">名前（必須）</label><input class="input" id="f-name" name="name" required value="' + h(d.name) + '" placeholder="例：リビングのネザーランド"></div>' +
       '<div class="field"><label for="f-variety">品種</label><input class="input" id="f-variety" name="variety" value="' + h(d.variety) + '" placeholder="例：P. bifurcatum" list="variety-list">' +
-      '<datalist id="variety-list">' + ['マセラティ（P. ‘Maserati’）', 'P. bifurcatum', 'P. bifurcatum ‘Netherlands’', 'P. ridleyi', 'P. veitchii', 'P. willinckii', 'P. superbum', 'P. grande', 'P. coronarium', 'P. alcicorne', 'P. hillii', 'P. stemaria', 'P. elephantotis', 'P. andinum', 'P. wandae', 'P. holttumii', 'P. quadridichotomum', 'P. madagascariense', 'P. ellisii', 'P. wallichii'].map(function (v) { return '<option value="' + h(v) + '">'; }).join('') + '</datalist></div>' +
+      '<datalist id="variety-list">' + ['マセラティ（P. ‘Maserati’）', 'リドレイ（P. ridleyi）', 'リドレイ パカラン', 'ネザーランド（P. bifurcatum ‘Netherlands’）', 'グランデ（P. grande）', 'ワンダエ（P. wandae）', 'ピューチャン', '月光爪哇', 'P. bifurcatum', 'P. bifurcatum ‘Netherlands’', 'P. ridleyi', 'P. veitchii', 'P. willinckii', 'P. superbum', 'P. grande', 'P. coronarium', 'P. alcicorne', 'P. hillii', 'P. stemaria', 'P. elephantotis', 'P. andinum', 'P. wandae', 'P. holttumii', 'P. quadridichotomum', 'P. madagascariense', 'P. ellisii', 'P. wallichii'].map(function (v) { return '<option value="' + h(v) + '">'; }).join('') + '</datalist></div>' +
       '<div class="field"><label for="f-location">置き場所</label><input class="input" id="f-location" name="location" value="' + h(d.location) + '" placeholder="例：東の窓辺"></div>' +
       '<div class="field"><span class="label">仕立て</span><div class="seg" role="radiogroup">' + Object.keys(S.STYLES).map(function (k) {
         return '<button type="button" role="radio" aria-checked="' + (d.style === k) + '" class="' + (d.style === k ? 'active' : '') + '" data-style="' + k + '">' + S.STYLES[k] + '</button>';
