@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.2.4';
+  var APP_VERSION = '1.2.5';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -50,14 +50,23 @@
   function fmtWeight(w) { return (Math.round(w * 10) / 10).toLocaleString('ja-JP') + 'g'; }
   function safePhoto(src) { return typeof src === 'string' && /^data:image\//.test(src) ? src : ''; }
 
+  /** 今日から何日後か（カレンダーの日付で数える。昨日なら -1） */
+  function calendarDays(ms) {
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var day = new Date(ms); day.setHours(0, 0, 0, 0);
+    return Math.round((day - today) / S.DAY);
+  }
+
   function daysText(j) {
     if (j.predictedAt === null) return '';
-    var d = j.daysLeft;
+    var cd = calendarDays(j.predictedAt);
+    var date = fmtDate(j.predictedAt);
     if (j.status === 'water') {
-      return d < -0.5 ? '予定日を ' + Math.round(-d) + '日過ぎています' : '今日が水やりの目安です';
+      return cd < 0 ? '予定日（' + date + '）を ' + (-cd) + '日過ぎています' : '今日が水やりの目安です';
     }
-    if (d < 1) return '明日ごろ（' + fmtDate(j.predictedAt) + '）';
-    return 'あと約' + Math.round(d) + '日（' + fmtDate(j.predictedAt) + '）';
+    if (cd <= 0) return '今日の' + new Date(j.predictedAt).getHours() + '時ごろ（' + date + '）';
+    if (cd === 1) return '明日（' + date + '）';
+    return 'あと' + cd + '日（' + date + '）';
   }
 
   var ICONS = {
