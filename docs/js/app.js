@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.3.0';
+  var APP_VERSION = '1.2.5';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -748,7 +748,7 @@
       '<div class="stack">' +
       '<button class="btn primary block" data-go="settings">接続の設定をする</button>' +
       '<button class="btn block" data-action="demo-on">サンプルデータで試してみる</button>' +
-      '</div><p class="small" style="margin-top:20px">接続の設定には、スプレッドシートの「ウェブアプリのURL」と「合言葉」が必要です。<br><a href="https://github.com/kushinon/bikaku-log#readme" target="_blank" rel="noopener">準備のしかた（説明書）を見る</a></p></main>';
+      '</div><p class="small" style="margin-top:20px">接続の設定には、スプレッドシートの「ウェブアプリのURL」と「合言葉」が必要です。<br>くわしくは README の手順をご覧ください。</p></main>';
   }
 
   // ----- 設定 -----
@@ -866,7 +866,7 @@
       '<div class="field"><label for="s-url">ウェブアプリのURL</label><input class="input" id="s-url" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec" value="' + h(config.url) + '"></div>' +
       '<div class="field"><label for="s-pass">合言葉</label><div class="row"><input class="input" id="s-pass" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" value="' + h(config.passcode) + '">' +
       '<button type="button" class="btn small" data-action="toggle-pass">表示</button></div>' +
-      '<div class="hint">URLと合言葉はこの端末の中だけに保存されます。<a href="https://github.com/kushinon/bikaku-log#2-はじめかた" target="_blank" rel="noopener">準備のしかた</a></div></div>' +
+      '<div class="hint">URLと合言葉はこの端末の中だけに保存されます。</div></div>' +
       '<button class="btn primary block" data-action="settings-save">接続して保存</button>' +
       '<div id="s-msg"></div></section>' +
       '<section class="panel"><h2>記録の取り込み</h2><p class="small">Google Keep などのメモに書いた過去の計量記録を、まとめて取り込めます。</p>' +
