@@ -1,0 +1,14 @@
+{
+  "name": "bikaku-log",
+  "private": true,
+  "description": "ビカクシダの水やり管理アプリ（自動テスト用の設定）",
+  "scripts": {
+    "build:gas": "node tools/build-gas.js",
+    "test": "node --test \"tests/unit/*.test.js\"",
+    "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.js\"",
+    "test:all": "npm test && npm run test:e2e"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

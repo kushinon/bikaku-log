@@ -109,7 +109,7 @@ var BikakuWeather = (function () {
     });
   }
 
-  return { load: load, cached: cached, search: search, current: current, vpd: vpd };
+  return { load: load, cached: cached, search: search, current: current, vpd: vpd, summarize: summarize };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = BikakuWeather;

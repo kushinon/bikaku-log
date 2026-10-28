@@ -1,0 +1,27 @@
+# GitHub に変更を送るたびに、自動テストを実行する
+name: 自動テスト
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: ブラウザ（Chromium）の準備
+        run: npx playwright install --with-deps chromium
+      - name: 判定・取り込み・サーバーのテスト
+        run: npm test
+      - name: 画面の動きのテスト
+        run: npm run test:e2e

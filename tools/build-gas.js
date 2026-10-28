@@ -6,7 +6,17 @@ const root = path.join(__dirname, '..');
 const header =
   '// ===== ビカクログ サーバー用コード（このファイルの中身をすべて Apps Script に貼り付けます） =====\n' +
   '// ※このファイルは tools/build-gas.js で自動生成しています。直接編集しないでください。\n\n';
-const server = fs.readFileSync(path.join(root, 'gas/src/server.js'), 'utf8');
-const shared = fs.readFileSync(path.join(root, 'docs/js/shared.js'), 'utf8');
-fs.writeFileSync(path.join(root, 'gas/Code.gs'), header + server + '\n\n' + shared);
-console.log('gas/Code.gs を作成しました');
+
+/** 作るべき gas/Code.gs の中身を返す（ファイルには書き込まない） */
+function build() {
+  const server = fs.readFileSync(path.join(root, 'gas/src/server.js'), 'utf8');
+  const shared = fs.readFileSync(path.join(root, 'docs/js/shared.js'), 'utf8');
+  return header + server + '\n\n' + shared;
+}
+
+if (require.main === module) {
+  fs.writeFileSync(path.join(root, 'gas/Code.gs'), build());
+  console.log('gas/Code.gs を作成しました');
+}
+
+module.exports = { build };

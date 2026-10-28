@@ -439,7 +439,29 @@ gas/
   src/server.js          … サーバー側の元のコード
 tools/
   build-gas.js           … gas/src/server.js と docs/js/shared.js から gas/Code.gs を作る
+tests/
+  unit/                  … 水やり判定・メモの取り込み・天気・サーバーのテスト
+  e2e/                   … 画面を実際に操作して確かめるテスト（iPhone の大きさのブラウザ）
+  fixtures/              … テスト用の作り物の計量メモ
+  helpers/               … Apps Script の模型など、テスト用の道具
+.github/workflows/test.yml … GitHub に送るたびに自動テストを実行する設定
 ```
+
+### 自動テスト
+
+GitHub に変更を送るたびに、自動でテスト（判定・取り込み・サーバー・画面の操作）が実行されます。
+結果はリポジトリの **Actions** タブで見られます（✅ なら問題なし、❌ ならどこかが壊れています）。
+
+手元で実行するときは、Node.js（22 以降）を入れてから次のようにします。
+
+```
+npm install                       # 初回だけ
+npx playwright install chromium   # 初回だけ（画面のテスト用のブラウザ）
+npm test                          # 判定・取り込み・サーバーのテスト
+npm run test:e2e                  # 画面の動きのテスト
+```
+
+テストのデータはすべて作り物で、実際の記録は使っていません。
 
 コードを変更する人へ：`gas/src/server.js` か `docs/js/shared.js` を変えたら、`node tools/build-gas.js` を実行して `gas/Code.gs` を作り直してください。
 画面のファイルを変えたら、`docs/sw.js` の `CACHE` の番号（`bikaku-v1` → `bikaku-v2`）を上げると、各端末で新しい画面に切り替わります。

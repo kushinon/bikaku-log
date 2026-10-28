@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.3.0';
+  var APP_VERSION = '1.3.1';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -187,6 +187,7 @@
     }
     if (defer) return;   // まとめて保存するときは、呼び出し側で最後に1回だけ保存する
     saveState();
+    renderSyncBadge();   // すぐに「未送信」と表示する
     scheduleSync(800);
   }
 
@@ -870,6 +871,7 @@
     });
     chain.then(function () {
       saveState();
+      renderSyncBadge();
       scheduleSync(300);
       toast(done + '枚を追加しました' + (failed ? '（' + failed + '枚は読み込めませんでした）' : ''));
       renderAlbum(plantId);
@@ -1186,6 +1188,7 @@
       put('logs', { id: uuid(), plantId: is.plantId, at: e.at, weight: e.weight, kind: e.kind, memo: e.memo || '', deleted: false }, true);
     });
     saveState();
+    renderSyncBadge();
     scheduleSync(300);
     var plantId = is.plantId;
     importState = null;
