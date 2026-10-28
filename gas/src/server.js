@@ -1,3 +1,8 @@
+/**
+ * @OnlyCurrentDoc
+ * （↑ 読み書きを、このコードが入っているスプレッドシートだけに限定する指定です）
+ */
+
 /*
  * ビカクログ サーバー側（Google Apps Script）
  *
@@ -11,6 +16,8 @@
 
 var SHEET_PLANTS = '株';
 var SHEET_LOGS = '記録';
+var SHEET_PHOTOS = 'アルバム';
+var SERVER_VERSION = 2;    // 2: アルバムに対応
 
 // シートの列（並び順＝スプレッドシートの列の順番）
 var PLANT_COLUMNS = [
@@ -21,6 +28,11 @@ var PLANT_COLUMNS = [
 var LOG_COLUMNS = [
   ['id', 'ID'], ['plantId', '株ID'], ['at', '日時(数値)'], ['atText', '日時'], ['weight', '重さ(g)'],
   ['kind', '種別'], ['memo', 'メモ'], ['updatedAt', '更新'], ['deleted', '削除'], ['syncedAt', '保存日時(サーバー)']
+];
+
+var PHOTO_COLUMNS = [
+  ['id', 'ID'], ['plantId', '株ID'], ['at', '日時(数値)'], ['atText', '日時'], ['photo', '写真'],
+  ['memo', 'メモ'], ['updatedAt', '更新'], ['deleted', '削除'], ['syncedAt', '保存日時(サーバー)']
 ];
 
 var NUMERIC_KEYS = ['at', 'weight', 'targetWeight', 'createdAt', 'updatedAt', 'syncedAt'];
@@ -40,9 +52,11 @@ function doPost(e) {
     var req = JSON.parse(e.postData.contents);
     checkPasscode_(req.passcode);
     if (req.action === 'ping') {
-      res = { ok: true, serverTime: Date.now() };
+      res = { ok: true, serverTime: Date.now(), version: SERVER_VERSION };
     } else if (req.action === 'sync') {
       res = sync_(req);
+    } else if (req.action === 'photos') {
+      res = photos_(req);
     } else {
       throw new Error('不明な操作です');
     }
@@ -82,12 +96,15 @@ function sync_(req) {
 
     var plantOps = ops.filter(function (o) { return o.table === 'plants'; }).map(function (o) { return o.record; });
     var logOps = ops.filter(function (o) { return o.table === 'logs'; }).map(function (o) { return o.record; });
+    var photoOps = ops.filter(function (o) { return o.table === 'photos'; }).map(function (o) { return o.record; });
     upsert_(plantSheet, PLANT_COLUMNS, plantOps, now, touched.plants);
     upsert_(logSheet, LOG_COLUMNS, logOps, now, touched.logs);
+    if (photoOps.length) upsert_(ensureSheet_(ss, SHEET_PHOTOS, PHOTO_COLUMNS), PHOTO_COLUMNS, photoOps, now, {});
 
     var since = Number(req.since) || 0;
     return {
       ok: true,
+      version: SERVER_VERSION,
       serverTime: now,
       plants: readChanged_(plantSheet, PLANT_COLUMNS, since, touched.plants),
       logs: readChanged_(logSheet, LOG_COLUMNS, since, touched.logs)
@@ -95,6 +112,15 @@ function sync_(req) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/** アルバムの写真を返す（写真は大きいので、ふだんの同期とは別に、株ごとに読み込む） */
+function photos_(req) {
+  var sheet = ensureSheet_(SpreadsheetApp.getActiveSpreadsheet(), SHEET_PHOTOS, PHOTO_COLUMNS);
+  var list = readAll_(sheet, PHOTO_COLUMNS)
+    .map(function (r) { return rowToRecord_(r, PHOTO_COLUMNS); })
+    .filter(function (ph) { return ph.id && !ph.deleted && (!req.plantId || ph.plantId === String(req.plantId)); });
+  return { ok: true, version: SERVER_VERSION, photos: list };
 }
 
 function ensureSheet_(ss, name, columns) {

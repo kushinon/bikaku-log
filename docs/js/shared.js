@@ -18,7 +18,10 @@ var BikakuShared = (function () {
     SOON_MARGIN: 0.05,     // 目安重量の +5% 以内なら「もうすぐ」
     TARGET_SAMPLES: 5,     // 目安重量の算出に使う「水やり前」記録の件数（新しい順）
     MIN_SPAN_HOURS: 6,     // 減り方の計算に必要な最短の記録期間
-    HISTORY_CYCLES: 3      // 予測の補助に使う過去の水やりサイクル数
+    HISTORY_CYCLES: 3,     // 予測の補助に使う過去の水やりサイクル数
+    WEATHER_MIN: 0.6,      // 天気による乾きやすさの補正の下限（ふだんの0.6倍）
+    WEATHER_MAX: 1.6,      // 同じく上限（ふだんの1.6倍）
+    BACKTEST_CYCLES: 6     // 予測の精度を確かめる過去のサイクル数
   };
 
   var KINDS = {
@@ -93,22 +96,75 @@ var BikakuShared = (function () {
     return slope < 0 ? -slope : null;
   }
 
-  /** 過去の水やりサイクル（水やり後 → 次の水やり前）の平均の減り方 */
+  /** 過去の水やりサイクル（水やり後 → 次の水やり前）の平均の減り方と、その期間 */
   function historicalRate(sorted) {
-    var rates = [];
+    var cycles = [];
     var lastAfter = null;
     sorted.forEach(function (l) {
       if (l.kind === 'after') lastAfter = l;
       else if (l.kind === 'before' && lastAfter) {
         var days = (l.at - lastAfter.at) / DAY;
         var drop = lastAfter.weight - l.weight;
-        if (days > 0.25 && drop > 0) rates.push(drop / days);
+        if (days > 0.25 && drop > 0) cycles.push({ rate: drop / days, span: [lastAfter.at, l.at] });
         lastAfter = null;
       }
     });
-    if (!rates.length) return null;
-    var recent = rates.slice(-CONFIG.HISTORY_CYCLES);
-    return recent.reduce(function (a, b) { return a + b; }, 0) / recent.length;
+    if (!cycles.length) return null;
+    var recent = cycles.slice(-CONFIG.HISTORY_CYCLES);
+    return {
+      rate: recent.reduce(function (a, c) { return a + c.rate; }, 0) / recent.length,
+      spans: recent.map(function (c) { return c.span; })
+    };
+  }
+
+  // ---------------- 天気（乾きやすさ） ----------------
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+  /** その時刻の日付（端末の時間帯）を 'YYYY-MM-DD' で返す */
+  function dayKey(ms) {
+    var d = new Date(ms);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  function endOfDay(ms) {
+    var d = new Date(ms);
+    d.setHours(24, 0, 0, 0);
+    return d.getTime();
+  }
+
+  /** 期間内の1日ごとの乾きやすさ（飽差 kPa）の平均。データがなければ null */
+  function meanVpd(weather, spans) {
+    var sum = 0, n = 0;
+    spans.forEach(function (span) {
+      for (var t = span[0]; t <= span[1] + 1; t = endOfDay(t)) {
+        var v = weather.vpd[dayKey(t)];
+        if (typeof v === 'number') { sum += v; n++; }
+        if (t >= span[1]) break;
+      }
+    });
+    return n ? sum / n : null;
+  }
+
+  /**
+   * 天気を考えて、目安重量になる時刻を1日ずつ計算する
+   * 乾きやすい日（飽差が大きい日）は速く、湿った日はゆっくり減るとみなす。
+   * 室内の株も多いので、補正は控えめ（飽差の比の平方根、0.6〜1.6倍）にする
+   */
+  function projectWithWeather(from, weight, target, rate, vRef, weather) {
+    var t = from, remaining = weight - target;
+    for (var guard = 0; guard < 400 && remaining > 0; guard++) {
+      var v = weather.vpd[dayKey(t)];
+      var factor = typeof v === 'number' ? Math.sqrt(Math.max(v, 0.01) / vRef) : 1;
+      factor = Math.min(CONFIG.WEATHER_MAX, Math.max(CONFIG.WEATHER_MIN, factor));
+      var dayRate = rate * factor;
+      var dayEnd = endOfDay(t);
+      var loss = dayRate * (dayEnd - t) / DAY;
+      if (loss >= remaining) return t + remaining / dayRate * DAY;
+      remaining -= loss;
+      t = dayEnd;
+    }
+    return t;
   }
 
   /**
@@ -116,8 +172,9 @@ var BikakuShared = (function () {
    * @return {{status, statusLabel, target, autoTarget, targetSource, latest,
    *           ratePerDay, rateSource, predictedAt, daysLeft, lastWateredAt, note}}
    */
-  function judgePlant(plant, logs, now) {
+  function judgePlant(plant, logs, now, opts) {
     now = now || Date.now();
+    opts = opts || {};
     var all = plantLogs(plant.id, logs);
     var resetIdx = -1;
     all.forEach(function (l, i) { if (l.memo && RESET_RE.test(l.memo)) resetIdx = i; });
@@ -137,6 +194,8 @@ var BikakuShared = (function () {
       daysLeft: null,
       lastWateredAt: null,
       resetAt: resetIdx > 0 ? all[resetIdx].at : null,
+      weatherApplied: false,
+      plainPredictedAt: null,
       note: ''
     };
 
@@ -172,12 +231,20 @@ var BikakuShared = (function () {
     // 足りなければ過去のサイクルの平均、それもなければ水やり後の点も含めて計算する
     var drying = segment.length && segment[0].kind === 'after' ? segment.slice(1) : segment;
     var rate = dryingRate(drying);
+    var rateSpans = null;   // 減り方を計算した期間（天気の補正に使う）
     if (rate !== null) {
       r.rateSource = 'recent';
+      rateSpans = [[drying[0].at, drying[drying.length - 1].at]];
     } else {
-      rate = historicalRate(sorted);
-      if (rate !== null) r.rateSource = 'history';
-      else if ((rate = dryingRate(segment)) !== null) r.rateSource = 'recent';
+      var hist = historicalRate(sorted);
+      if (hist) {
+        rate = hist.rate;
+        rateSpans = hist.spans;
+        r.rateSource = 'history';
+      } else if ((rate = dryingRate(segment)) !== null) {
+        r.rateSource = 'recent';
+        rateSpans = [[segment[0].at, segment[segment.length - 1].at]];
+      }
     }
     r.ratePerDay = rate !== null ? Math.round(rate * 10) / 10 : null;
 
@@ -195,6 +262,12 @@ var BikakuShared = (function () {
       if (rate) r.predictedAt = current.at - (target - current.weight) / rate * DAY;
     } else if (rate) {
       r.predictedAt = current.at + (current.weight - target) / rate * DAY;
+      r.plainPredictedAt = r.predictedAt;
+      var vRef = opts.weather && rateSpans ? meanVpd(opts.weather, rateSpans) : null;
+      if (vRef) {
+        r.predictedAt = projectWithWeather(current.at, current.weight, target, rate, vRef, opts.weather);
+        r.weatherApplied = true;
+      }
       var left = (r.predictedAt - now) / DAY;
       if (left <= 0) r.status = 'water';
       else if (left <= CONFIG.SOON_DAYS) r.status = 'soon';
@@ -207,6 +280,51 @@ var BikakuShared = (function () {
     if (r.status === 'ok' && current.weight <= target * (1 + CONFIG.SOON_MARGIN)) r.status = 'soon';
     if (r.predictedAt !== null) r.daysLeft = (r.predictedAt - now) / DAY;
     return finish(r);
+  }
+
+  /**
+   * 予測の精度を、過去の水やりサイクルで確かめる
+   * 各サイクルの途中の計量の時点で予測していたら、実際の「水やり前」と何日ずれたかを計算する
+   * @return {{cycles, plain, weatherCycles, weatherPlain, weather}} 平均のずれ（日）。計算できなければ null
+   */
+  function evaluatePlant(plant, logs, weather) {
+    var sorted = plantLogs(plant.id, logs);
+    var errs = { plain: [], weather: [] };
+    var lastAfter = -1;
+    var tests = [];
+    sorted.forEach(function (l, i) {
+      if (l.kind === 'after') lastAfter = i;
+      else if (l.kind === 'before' && lastAfter >= 0) {
+        var a = sorted[lastAfter];
+        var mid = a.at + (l.at - a.at) / 2;
+        var best = null;
+        for (var k = lastAfter + 1; k < i; k++) {
+          if (sorted[k].kind === 'regular' && (!best || Math.abs(sorted[k].at - mid) < Math.abs(best.at - mid))) best = sorted[k];
+        }
+        if (best) tests.push({ checkpoint: best, actual: l.at });
+        lastAfter = -1;
+      }
+    });
+    tests.slice(-CONFIG.BACKTEST_CYCLES).forEach(function (t) {
+      var past = logs.filter(function (x) { return x.plantId === plant.id && Number(x.at) <= t.checkpoint.at; });
+      var p = judgePlant(plant, past, t.checkpoint.at + 60 * 1000);
+      if (p.predictedAt === null || p.status === 'water') return;
+      var e = (p.predictedAt - t.actual) / DAY;
+      errs.plain.push(e);
+      if (weather) {
+        var w = judgePlant(plant, past, t.checkpoint.at + 60 * 1000, { weather: weather });
+        if (w.weatherApplied) errs.weather.push({ plain: e, weather: (w.predictedAt - t.actual) / DAY });
+      }
+    });
+    function mae(list) { return list.length ? list.reduce(function (s, e) { return s + Math.abs(e); }, 0) / list.length : null; }
+    // 天気の補正の良し悪しは、天気のデータがあるサイクルどうしで比べる
+    return {
+      cycles: errs.plain.length,
+      plain: mae(errs.plain),
+      weatherCycles: errs.weather.length,
+      weatherPlain: mae(errs.weather.map(function (x) { return x.plain; })),
+      weather: mae(errs.weather.map(function (x) { return x.weather; }))
+    };
   }
 
   function finish(r) {
@@ -334,6 +452,8 @@ var BikakuShared = (function () {
     STATUS: STATUS,
     DAY: DAY,
     judgePlant: judgePlant,
+    evaluatePlant: evaluatePlant,
+    dayKey: dayKey,
     sortByUrgency: sortByUrgency,
     plantLogs: plantLogs,
     makeSampleData: makeSampleData

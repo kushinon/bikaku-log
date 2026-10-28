@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.2.7';
+  var APP_VERSION = '1.3.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -124,13 +124,60 @@
   function judged() {
     var logs = logsList();
     var now = Date.now();
-    return S.sortByUrgency(plantsList().map(function (p) { return { plant: p, judge: S.judgePlant(p, logs, now) }; }));
+    return S.sortByUrgency(plantsList().map(function (p) { return { plant: p, judge: judgeOne(p, logs, now) }; }));
+  }
+
+  // ---------------- 天気と予測の精度 ----------------
+
+  var weatherError = '';
+  var evalCache = {};
+
+  function currentWeather() {
+    return config.place ? BikakuWeather.cached(config.place) : null;
+  }
+
+  function refreshWeather(force) {
+    if (!config.place) return Promise.resolve();
+    return BikakuWeather.load(config.place, force).then(function () {
+      weatherError = '';
+      evalCache = {};
+      if (!isEditing()) render();
+    }).catch(function (err) {
+      weatherError = err.name === 'AbortError' || err instanceof TypeError ? '天気を取得できませんでした（電波を確認してください）' : err.message;
+    });
+  }
+
+  /** 過去の記録で予測の精度を確かめる（記録や天気が変わらない間は計算し直さない） */
+  function evaluateOne(p, logs, weather) {
+    var mine = logs.filter(function (l) { return l.plantId === p.id; });
+    var sig = mine.length + ':' + mine.reduce(function (m, l) { return Math.max(m, l.updatedAt || 0); }, 0) + ':' +
+      (weather ? weather.fetchedAt : 0) + ':' + p.targetWeight;
+    var c = evalCache[p.id];
+    if (c && c.sig === sig) return c.ev;
+    var ev = S.evaluatePlant(p, mine, weather);
+    evalCache[p.id] = { sig: sig, ev: ev };
+    return ev;
+  }
+
+  /**
+   * 株ごとの判定。天気の補正は、過去2回以上のサイクルで確かめて
+   * 「天気を考えた方が当たっていた」株だけに使う
+   */
+  function judgeOne(p, logs, now) {
+    var weather = currentWeather();
+    var ev = evaluateOne(p, logs, weather);
+    var useWeather = !!weather && ev.weatherCycles >= 2 && ev.weather < ev.weatherPlain;
+    var j = S.judgePlant(p, logs, now, useWeather ? { weather: weather } : {});
+    j.accuracy = ev;
+    j.weatherAvailable = !!weather;
+    return j;
   }
 
   /** 変更を端末に保存して、未送信リストに積む */
   function put(table, record, defer) {
     record.updatedAt = Math.max(Date.now(), (record.updatedAt || 0) + 1);
-    state[table][record.id] = record;
+    if (table === 'photos') albumPut(record);   // アルバムの写真は別の場所（IndexedDB）に保存する
+    else state[table][record.id] = record;
     if (!config.demo) {
       // 同じ記録への未送信の変更（送信中でないもの）は新しいものに置き換える
       state.outbox = state.outbox.filter(function (op) {
@@ -196,10 +243,18 @@
     'post-failed': { badge: 'サーバーで保存できません', detail: 'サーバーは動いていますが、記録を受け付けませんでした。Apps Script の「デプロイを管理」で、アクセスできるユーザーが「全員」になっているか、もう一度承認が必要になっていないかを確認してください。' }
   };
 
+  /** サーバーがアルバムに対応しているか（古いサーバーに写真を送ると捨てられてしまうため） */
+  function serverSupportsPhotos() { return (state.serverVersion || 1) >= 2; }
+
+  function sendableOps() {
+    return state.outbox.filter(function (op) { return op.table !== 'photos' || serverSupportsPhotos(); });
+  }
+
   function pickBatch() {
     var batch = [], size = 0;
-    for (var i = 0; i < state.outbox.length; i++) {
-      var op = state.outbox[i];
+    var ops = sendableOps();
+    for (var i = 0; i < ops.length; i++) {
+      var op = ops[i];
       var s = JSON.stringify(op).length;
       if (batch.length && (batch.length >= 25 || size + s > 400000)) break;
       batch.push(op);
@@ -242,18 +297,19 @@
         state.plants = {}; state.logs = {};
         data.plants.forEach(function (p) { state.plants[p.id] = p; });
         data.logs.forEach(function (l) { state.logs[l.id] = l; });
-        state.outbox.forEach(function (op) { state[op.table][op.record.id] = op.record; });
+        state.outbox.forEach(function (op) { if (op.table !== 'photos') state[op.table][op.record.id] = op.record; });
       } else {
         mergeIncoming('plants', data.plants);
         mergeIncoming('logs', data.logs);
       }
       state.since = data.serverTime;
+      state.serverVersion = data.version || 1;
       state.lastSyncAt = Date.now();
       syncError = '';
       saveState();
       var received = data.plants.length + data.logs.length;
       if (received && !isEditing()) render();
-      return state.outbox.length ? 'more' : 'done';
+      return sendableOps().length ? 'more' : 'done';
     }).catch(function (err) {
       if (err.name === 'AbortError') syncError = 'timeout';
       else if (err instanceof TypeError) syncError = navigator.onLine === false ? 'offline' : 'unreachable';
@@ -482,7 +538,7 @@
     var p = state.plants[id];
     if (!p || p.deleted) { go(''); return; }
     var logs = logsList();
-    var j = S.judgePlant(p, logs, Date.now());
+    var j = judgeOne(p, logs, Date.now());
     var sorted = S.plantLogs(p.id, logs);
     var tags = [S.STYLES[p.style], p.location].filter(Boolean);
 
@@ -503,7 +559,8 @@
       (j.targetSource === 'manual' && j.autoTarget !== null ? '<dt>自動計算の値</dt><dd>' + fmtWeight(j.autoTarget) + '</dd>' : '') +
       '<dt>減り方</dt><dd>' + (j.ratePerDay !== null ? '1日あたり 約' + j.ratePerDay + 'g <small class="small">' + (j.rateSource === 'recent' ? '直近の記録から' : '過去の平均から') + '</small>' : '—') + '</dd>' +
       '<dt>前回の水やり</dt><dd>' + (j.lastWateredAt ? h(fmtDateTime(j.lastWateredAt)) : '—') + '</dd>' +
-      '</dl>' + (j.note ? '<div class="note">' + h(j.note) + '</div>' : '') +
+      predictionRows(j) +
+      '</dl>' + (j.note ? '<div class="note">' + h(j.note) + '</div>' : '') + predictionNote(j) +
       (j.resetAt ? '<div class="note">' + h(fmtDate(j.resetAt)) + ' の仕立て直し・植え替えより前の記録は、判定に使っていません。</div>' : '') +
       '<div class="target-edit"><input class="input" id="target-input" inputmode="decimal" placeholder="目安重量を手動で設定（g）" value="' + h(p.targetWeight === null || p.targetWeight === undefined ? '' : p.targetWeight) + '">' +
       '<button class="btn small primary" data-action="target-save">設定</button>' +
@@ -523,6 +580,8 @@
       '<span><svg viewBox="0 0 22 12"><line x1="0" y1="6" x2="22" y2="6" stroke="var(--chart-line)" stroke-width="2" stroke-dasharray="2 3"/></svg>予測</span>' +
       '</div></section>';
 
+    html += '<section class="panel" id="album-panel"><h2>成長アルバム</h2><div id="album"><p class="small">読み込み中…</p></div></section>';
+
     var recent = sorted.slice().reverse();
     html += '<section class="panel"><h2>記録（' + recent.length + '件）</h2>';
     if (!recent.length) html += '<p class="small">まだ記録がありません。</p>';
@@ -538,6 +597,47 @@
     html += '</main>';
     app.innerHTML = html;
     drawChart($('#chart'), sorted, j, viewState.chartRange);
+    renderAlbum(p.id);
+  }
+
+  function fmtDays(d) { return '±' + (Math.round(d * 10) / 10) + '日'; }
+
+  /** 詳細画面の「予測の方法」「予測の精度」「今日の天気」 */
+  function predictionRows(j) {
+    var ev = j.accuracy, rows = '';
+    if (j.predictedAt !== null && j.status !== 'water') {
+      rows += '<dt>予測の方法</dt><dd>' + (j.weatherApplied ? '記録＋天気（気温・湿度）' : '記録から') + '</dd>';
+    }
+    if (ev && ev.cycles) {
+      var useW = j.weatherApplied && ev.weatherCycles >= 2;
+      rows += '<dt>予測の精度</dt><dd>' + fmtDays(useW ? ev.weather : ev.plain) +
+        ' <small class="small">過去' + (useW ? ev.weatherCycles : ev.cycles) + '回の平均のずれ</small></dd>';
+    }
+    var w = currentWeather();
+    if (w) {
+      var key = S.dayKey(Date.now());
+      if (typeof w.temp[key] === 'number') {
+        rows += '<dt>今日の天気</dt><dd>' + w.temp[key] + '℃・湿度' + w.rh[key] + '% <small class="small">' + h(dryText(w.vpd[key])) + '</small></dd>';
+      }
+    }
+    return rows;
+  }
+
+  function dryText(v) {
+    if (typeof v !== 'number') return '';
+    return v >= 1.2 ? 'とても乾きやすい' : v >= 0.7 ? '乾きやすい' : v >= 0.35 ? 'ふつう' : '乾きにくい';
+  }
+
+  function predictionNote(j) {
+    var ev = j.accuracy;
+    if (!j.weatherAvailable) {
+      return config.demo ? '' : '<div class="note">⚙ 設定で地域を選ぶと、天気（気温・湿度）を考えた予測を試せます。</div>';
+    }
+    if (!ev || ev.weatherCycles < 2) {
+      return '<div class="note">天気を考えた予測は、水やりのサイクル（水やり後 → 途中の計量 → 水やり前）が2回以上たまると、当たり具合を確かめてから使い始めます。</div>';
+    }
+    return '<div class="note">過去' + ev.weatherCycles + '回で比べると、天気あり ' + fmtDays(ev.weather) + '・天気なし ' + fmtDays(ev.weatherPlain) + ' でした。' +
+      (j.weatherApplied ? 'この株は天気を考えた方が当たるので、天気も使って予測しています。' : 'この株は天気の影響が小さいようなので、記録だけで予測しています。') + '</div>';
   }
 
   // ----- グラフ（SVG） -----
@@ -640,6 +740,214 @@
     svg.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse' || e.buttons) pick(e); });
   }
 
+  // ----- 成長アルバム -----
+  // 写真はサーバーの「アルバム」シートに保存し、端末では IndexedDB に控えを置く
+  // （localStorage は容量が小さいため）。一覧の同期には含めず、詳細画面を開いたときに読み込む
+
+  var idb = (function () {
+    var dbp = null;
+    function open() {
+      if (!dbp) {
+        dbp = new Promise(function (resolve, reject) {
+          if (!window.indexedDB) { reject(new Error('no indexedDB')); return; }
+          var req = indexedDB.open('bikaku', 1);
+          req.onupgradeneeded = function () { req.result.createObjectStore('album'); };
+          req.onsuccess = function () { resolve(req.result); };
+          req.onerror = function () { reject(req.error); };
+        });
+      }
+      return dbp;
+    }
+    function run(mode, fn) {
+      return open().then(function (db) {
+        return new Promise(function (resolve, reject) {
+          var store = db.transaction('album', mode).objectStore('album');
+          var req = fn(store);
+          req.onsuccess = function () { resolve(req.result); };
+          req.onerror = function () { reject(req.error); };
+        });
+      });
+    }
+    return {
+      get: function (k) { return run('readonly', function (s) { return s.get(k); }).catch(function () { return null; }); },
+      set: function (k, v) { return run('readwrite', function (s) { return s.put(v, k); }).catch(function () {}); }
+    };
+  })();
+
+  var albums = {};           // 株ID → { list: [写真], fetchedAt }
+  var albumNeedsServer = false;
+
+  function albumKey(plantId) { return dataKey() + ':' + plantId; }
+
+  /** 未送信の写真の変更を、読み込んだ一覧に重ねる */
+  function withPending(plantId, list) {
+    var map = {};
+    list.forEach(function (ph) { map[ph.id] = ph; });
+    state.outbox.forEach(function (op) {
+      if (op.table === 'photos' && op.record.plantId === plantId) map[op.record.id] = Object.assign({ pending: true }, op.record);
+    });
+    return Object.keys(map).map(function (k) { return map[k]; })
+      .filter(function (ph) { return !ph.deleted; })
+      .sort(function (a, b) { return a.at - b.at; });
+  }
+
+  function albumPut(record) {
+    var a = albums[record.plantId] || (albums[record.plantId] = { list: [], fetchedAt: 0 });
+    a.list = a.list.filter(function (ph) { return ph.id !== record.id; }).concat([record]);
+    idb.set(albumKey(record.plantId), a.list);
+  }
+
+  function loadAlbum(plantId) {
+    var cached = albums[plantId] ? Promise.resolve(albums[plantId]) : idb.get(albumKey(plantId)).then(function (list) {
+      albums[plantId] = { list: list || [], fetchedAt: 0 };
+      return albums[plantId];
+    });
+    return cached.then(function (a) {
+      // サーバーから最新を取る（5分以内に取ったばかりなら取らない）
+      if (config.demo || !isConfigured() || navigator.onLine === false || Date.now() - a.fetchedAt < 5 * 60 * 1000) return a;
+      return post({ action: 'photos', passcode: config.passcode, plantId: plantId }).then(function (data) {
+        albumNeedsServer = false;
+        state.serverVersion = data.version || 1;
+        a.list = data.photos;
+        a.fetchedAt = Date.now();
+        idb.set(albumKey(plantId), a.list);
+        return a;
+      }).catch(function (err) {
+        if (/不明な操作/.test(err.message)) albumNeedsServer = true;
+        return a;
+      });
+    });
+  }
+
+  function weightNear(plantId, at) {
+    var best = null;
+    S.plantLogs(plantId, logsList()).forEach(function (l) {
+      if (Math.abs(l.at - at) < 36 * 3600 * 1000 && (!best || Math.abs(l.at - at) < Math.abs(best.at - at))) best = l;
+    });
+    return best;
+  }
+
+  function renderAlbum(plantId) {
+    loadAlbum(plantId).then(function (a) {
+      var box = $('#album');
+      if (!box || currentRoute().name !== 'plant' || currentRoute().id !== plantId) return;
+      var list = withPending(plantId, a.list);
+      var html = '';
+      if (albumNeedsServer || (!config.demo && isConfigured() && !serverSupportsPhotos() && state.lastSyncAt)) {
+        html += '<div class="msg err" style="margin:0 0 10px">アルバムの写真をスプレッドシートに保存するには、サーバーのコードの更新が必要です（説明書の「サーバー用のコードが更新されたとき」）。それまで写真はこの端末に保存され、更新後に自動で送られます。</div>';
+      }
+      if (!list.length) {
+        html += '<p class="small">写真を追加すると、日付順に並んで成長の様子を見返せます。</p>';
+      } else {
+        html += '<div class="album-grid">' + list.slice().reverse().map(function (ph) {
+          return '<button class="album-item" data-photo="' + h(ph.id) + '"><img src="' + h(safePhoto(ph.photo)) + '" alt="" loading="lazy">' +
+            '<span>' + h(fmtDate(ph.at)) + (ph.pending && !config.demo ? '・未送信' : '') + '</span></button>';
+        }).join('') + '</div>';
+      }
+      html += '<div class="actions" style="margin:12px 0 0"><label class="btn primary grow">' + ICONS.camera + '写真を追加<input type="file" accept="image/*" multiple id="album-input" hidden></label>' +
+        (list.length >= 2 ? '<button class="btn" data-action="album-compare">最初と比べる</button>' : '') + '</div>';
+      box.innerHTML = html;
+      $('#album-input').addEventListener('change', function (e) { addAlbumPhotos(plantId, Array.prototype.slice.call(e.target.files || [])); });
+      $$('[data-photo]', box).forEach(function (b) {
+        b.addEventListener('click', function () { openViewer(plantId, b.getAttribute('data-photo')); });
+      });
+    });
+  }
+
+  function addAlbumPhotos(plantId, files) {
+    if (!files.length) return;
+    toast('写真を小さくしています…');
+    var done = 0, failed = 0;
+    var chain = Promise.resolve();
+    files.forEach(function (file) {
+      chain = chain.then(function () {
+        return shrinkPhoto(file, [720, 640, 560, 480, 400, 320]).then(function (dataUrl) {
+          var at = file.lastModified && file.lastModified < Date.now() + 60000 && file.lastModified > Date.now() - 20 * 365 * S.DAY ? file.lastModified : Date.now();
+          put('photos', { id: uuid(), plantId: plantId, at: at, photo: dataUrl, memo: '', deleted: false }, true);
+          done++;
+        }).catch(function () { failed++; });
+      });
+    });
+    chain.then(function () {
+      saveState();
+      scheduleSync(300);
+      toast(done + '枚を追加しました' + (failed ? '（' + failed + '枚は読み込めませんでした）' : ''));
+      renderAlbum(plantId);
+    });
+  }
+
+  function closeOverlay() {
+    var o = $('#overlay');
+    if (o) o.remove();
+    document.body.style.overflow = '';
+  }
+
+  function showOverlay(html) {
+    closeOverlay();
+    var o = document.createElement('div');
+    o.id = 'overlay';
+    o.className = 'overlay';
+    o.innerHTML = html;
+    document.body.appendChild(o);
+    document.body.style.overflow = 'hidden';
+    o.addEventListener('click', function (e) { if (e.target === o || e.target.closest('[data-close]')) closeOverlay(); });
+    return o;
+  }
+
+  /** 写真を大きく表示する（前後の写真へ移動・日付やメモの変更・削除） */
+  function openViewer(plantId, photoId) {
+    var list = withPending(plantId, (albums[plantId] || { list: [] }).list);
+    var i = list.findIndex(function (ph) { return ph.id === photoId; });
+    if (i < 0) return;
+    var ph = list[i];
+    var near = weightNear(plantId, ph.at);
+    var o = showOverlay(
+      '<div class="viewer">' +
+      '<div class="viewer-top"><span>' + (i + 1) + ' / ' + list.length + '</span><button class="btn small" data-close>閉じる</button></div>' +
+      '<img src="' + h(safePhoto(ph.photo)) + '" alt="">' +
+      '<div class="viewer-nav"><button class="btn small" data-nav="-1"' + (i === 0 ? ' disabled' : '') + '>‹ 前</button>' +
+      '<b>' + h(fmtDate(ph.at)) + '</b><button class="btn small" data-nav="1"' + (i === list.length - 1 ? ' disabled' : '') + '>次 ›</button></div>' +
+      (near ? '<p class="small" style="text-align:center;margin:4px 0">その頃の重さ：' + fmtWeight(near.weight) + '（' + h(fmtDateTime(near.at)) + '）</p>' : '') +
+      '<div class="field"><label for="v-at">日時</label><input class="input" type="datetime-local" id="v-at" value="' + toLocalInput(ph.at) + '"></div>' +
+      '<div class="field"><label for="v-memo">メモ</label><input class="input" id="v-memo" value="' + h(ph.memo) + '" placeholder="例：新しい胞子葉が出た"></div>' +
+      '<div class="stack"><button class="btn primary block" data-v="save">日時・メモを保存</button>' +
+      '<button class="btn block" data-v="cover">一覧の写真にする</button>' +
+      '<button class="btn danger block" data-v="delete">この写真を削除</button></div></div>');
+    o.querySelectorAll('[data-nav]').forEach(function (b) {
+      b.addEventListener('click', function () { openViewer(plantId, list[i + Number(b.getAttribute('data-nav'))].id); });
+    });
+    o.querySelector('[data-v=save]').addEventListener('click', function () {
+      put('photos', Object.assign({}, ph, { pending: undefined, at: fromLocalInput($('#v-at').value), memo: $('#v-memo').value }));
+      toast('保存しました'); closeOverlay(); renderAlbum(plantId);
+    });
+    o.querySelector('[data-v=cover]').addEventListener('click', function () {
+      var p = state.plants[plantId];
+      if (!p) return;
+      if (ph.photo.length > PHOTO_MAX_CHARS) { toast('この写真は大きすぎるため使えません'); return; }
+      put('plants', Object.assign({}, p, { photo: ph.photo }));
+      toast('一覧の写真にしました'); closeOverlay(); render();
+    });
+    o.querySelector('[data-v=delete]').addEventListener('click', function () {
+      if (!confirm('この写真を削除しますか？')) return;
+      put('photos', Object.assign({}, ph, { pending: undefined, deleted: true }));
+      toast('削除しました'); closeOverlay(); renderAlbum(plantId);
+    });
+  }
+
+  /** いちばん古い写真と新しい写真を並べる */
+  function openCompare(plantId) {
+    var list = withPending(plantId, (albums[plantId] || { list: [] }).list);
+    if (list.length < 2) return;
+    var pair = [list[0], list[list.length - 1]];
+    var days = Math.round((pair[1].at - pair[0].at) / S.DAY);
+    showOverlay('<div class="viewer"><div class="viewer-top"><span>最初と最新（' + days + '日間）</span><button class="btn small" data-close>閉じる</button></div>' +
+      '<div class="compare">' + pair.map(function (ph) {
+        var near = weightNear(plantId, ph.at);
+        return '<figure><img src="' + h(safePhoto(ph.photo)) + '" alt=""><figcaption><b>' + h(fmtDate(ph.at)) + '</b>' +
+          (near ? '<br>' + fmtWeight(near.weight) : '') + (ph.memo ? '<br>' + h(ph.memo) : '') + '</figcaption></figure>';
+      }).join('') + '</div></div>');
+  }
+
   // ----- 株の登録・編集 -----
   var editDraft = null;
 
@@ -708,13 +1016,13 @@
   }
 
   /** 写真を縮小して JPEG の文字列にする（スプレッドシートの1セルに収まる大きさまで） */
-  function shrinkPhoto(file) {
+  function shrinkPhoto(file, sizes) {
     return new Promise(function (resolve, reject) {
       var url = URL.createObjectURL(file);
       var img = new Image();
       img.onload = function () {
         URL.revokeObjectURL(url);
-        var sizes = [480, 400, 320, 260, 200];
+        sizes = sizes || [480, 400, 320, 260, 200];
         for (var i = 0; i < sizes.length; i++) {
           var scale = Math.min(1, sizes[i] / Math.max(img.width, img.height));
           var c = document.createElement('canvas');
@@ -897,6 +1205,15 @@
       '<div id="s-msg"></div></section>' +
       '<section class="panel"><h2>記録の取り込み</h2><p class="small">Google Keep などのメモに書いた過去の計量記録を、まとめて取り込めます。</p>' +
       '<button class="btn block" data-go="import/">メモからまとめて取り込む</button></section>' +
+      '<section class="panel"><h2>地域（天気）</h2>' +
+      '<p class="small" style="font-size:16px">いまの設定：<b>' + h(config.place ? config.place.name : '未設定') + '</b>' +
+      (currentWeather() ? '<br>天気の更新：' + h(fmtAgo(currentWeather().fetchedAt)) : '') +
+      (weatherError ? '<br><span style="color:var(--water)">' + h(weatherError) + '</span>' : '') + '</p>' +
+      '<p class="small">気温と湿度から「乾きやすさ」を計算して、水やりの予測に使います（Open-Meteo の無料の天気データ）。だいたいの地域で十分です。</p>' +
+      '<div class="stack"><button class="btn block" data-action="place-current">現在地を使う</button>' +
+      '<div class="row"><input class="input" id="place-q" placeholder="地名で探す（例：横浜、大阪市）"><button class="btn small" data-action="place-search">探す</button></div>' +
+      '<div id="place-results"></div>' +
+      (config.place ? '<button class="btn ghost block" data-action="place-clear">天気を使わない</button>' : '') + '</div></section>' +
       '<section class="panel"><h2>同期</h2><p id="sync-status" class="small" style="font-size:16px">' + syncStatusText() + '</p>' +
       '<div class="stack"><button class="btn block" data-action="sync-now"' + (config.demo ? ' disabled' : '') + '>今すぐ同期</button>' +
       '<button class="btn block" data-action="full-reload"' + (config.demo || !isConfigured() ? ' disabled' : '') + '>サーバーから全データを読み直す</button></div>' +
@@ -1022,6 +1339,27 @@
         break;
       }
       case 'settings-save': settingsSave(); break;
+      case 'place-current':
+        toast('現在地を調べています…');
+        BikakuWeather.current().then(setPlace).catch(function (err) { toast(err.message); });
+        break;
+      case 'place-search': {
+        var q = $('#place-q').value.trim();
+        if (!q) { toast('地名を入れてください'); break; }
+        var box = $('#place-results');
+        box.innerHTML = '<p class="small">探しています…</p>';
+        BikakuWeather.search(q).then(function (list) {
+          box.innerHTML = list.length ? list.map(function (pl, i) {
+            return '<button class="btn block small" style="margin-top:6px;justify-content:flex-start" data-place="' + i + '">' + h(pl.name) + '</button>';
+          }).join('') : '<p class="small">見つかりませんでした。別の書き方で試してください。</p>';
+          placeResults = list;
+        }).catch(function () { box.innerHTML = '<p class="small">探せませんでした。電波を確認してください。</p>'; });
+        break;
+      }
+      case 'place-clear':
+        config.place = null; saveConfig(); evalCache = {}; toast('天気を使わない設定にしました'); render();
+        break;
+      case 'album-compare': openCompare(r.id); break;
       case 'force-update':
         if (state.outbox.length && !confirm('未送信の記録が ' + state.outbox.length + '件あります。端末には残るので、そのまま更新して大丈夫です。更新しますか？')) break;
         toast('最新版を読み込んでいます…');
@@ -1048,6 +1386,23 @@
     }
   });
 
+  var placeResults = [];
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-place]');
+    if (b && placeResults[Number(b.getAttribute('data-place'))]) setPlace(placeResults[Number(b.getAttribute('data-place'))]);
+  });
+
+  function setPlace(place) {
+    config.place = place;
+    saveConfig();
+    evalCache = {};
+    toast('地域を「' + place.name + '」にしました。天気を取得しています…');
+    refreshWeather(true).then(function () {
+      if (weatherError) toast(weatherError); else toast('天気を取得しました');
+      if (currentRoute().name === 'settings') viewSettings();
+    });
+  }
+
   // 取り込み画面のチェックと種別の変更
   document.addEventListener('change', function (e) {
     if (!importState || !importState.entries) return;
@@ -1064,6 +1419,7 @@
 
   // パソコンのキーボードでも計量を入力できるように
   document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && $('#overlay')) { closeOverlay(); return; }
     if (currentRoute().name !== 'weigh' || !weighState) return;
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
     if (/^[0-9.]$/.test(e.key)) { weighKey(e.key); e.preventDefault(); }
@@ -1071,7 +1427,7 @@
     else if (e.key === 'Enter') { weighSave(); e.preventDefault(); }
   });
 
-  window.addEventListener('hashchange', function () { window.scrollTo(0, 0); render(); });
+  window.addEventListener('hashchange', function () { closeOverlay(); window.scrollTo(0, 0); render(); });
   window.addEventListener('online', function () { syncError = ''; sync(); });
   window.addEventListener('offline', function () { syncError = 'offline'; renderSyncBadge(); });
   document.addEventListener('visibilitychange', function () {
@@ -1081,6 +1437,7 @@
       if (fresh && fresh.outbox) { state = fresh; }
       if (!isEditing()) render();
       sync();
+      refreshWeather(false);
     }
   });
   window.addEventListener('storage', function (e) {
@@ -1120,4 +1477,5 @@
   loadState();
   render();
   sync();
+  refreshWeather(false);
 })();
