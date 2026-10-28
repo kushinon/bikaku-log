@@ -379,3 +379,155 @@ textarea.input { min-height: 96px; resize: vertical; }
 .card-alert { font-size: 14px; font-weight: 700; color: var(--soon); }
 .panel.anomaly { background: var(--soon-soft); }
 .panel.anomaly p { margin: 0 0 8px; }
+
+/* =====================================================================
+   ビビッド（ポップ）デザイン
+   html[data-theme="pop"] のときだけ効く。シンプルに戻すと上のデザインになる
+   ===================================================================== */
+html[data-theme="pop"] {
+  --bg: #FFFDF7;
+  --surface: #FFFFFF;
+  --surface-2: #F1F3FA;
+  --line: #E3E5EF;
+  --text: #1B1B2F;
+  --text-2: #45475E;
+  --muted: #7A7C93;
+  --ink: #1B1B2F;              /* ふちどりと影の色 */
+  --primary: #0FA24A;
+  --primary-ink: #FFFFFF;
+  --primary-soft: #DFF7E7;
+  --orange: #FF8C1A;
+  --blue: #2F80ED;
+  --water: #E8433A;
+  --water-soft: #FFE3E0;
+  --soon: #C25E00;
+  --soon-soft: #FFE9CC;
+  --ok: #0E8F43;
+  --ok-soft: #D9F5E3;
+  --drop: #2F80ED;
+  --chart-line: #0FA24A;
+  --pop-shadow: 3px 3px 0 var(--ink);
+  --radius: 20px;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-theme="pop"] {
+    --bg: #15172B;
+    --surface: #23264A;
+    --surface-2: #2E3260;
+    --line: #3A3F72;
+    --text: #F5F6FF;
+    --text-2: #CFD2F2;
+    --muted: #9EA2CF;
+    --ink: #05060F;
+    --primary: #2BD06A;
+    --primary-ink: #0B1A10;
+    --primary-soft: #1D3D33;
+    --water: #FF6B5E;
+    --water-soft: #4A2333;
+    --soon: #FFB04A;
+    --soon-soft: #4A3622;
+    --ok: #4BE08A;
+    --ok-soft: #1D3D33;
+    --drop: #5AA2FF;
+    --blue: #5AA2FF;
+    --chart-line: #4BE08A;
+  }
+}
+
+html[data-theme="pop"] body {
+  font-family: "Hiragino Maru Gothic ProN", "Hiragino Maru Gothic Pro", "ヒラギノ丸ゴ ProN W4", -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
+  background-color: var(--bg);
+  background-image: radial-gradient(color-mix(in srgb, var(--primary) 16%, transparent) 1.4px, transparent 1.5px);
+  background-size: 22px 22px;
+}
+
+/* ヘッダー */
+html[data-theme="pop"] .topbar { background: color-mix(in srgb, var(--bg) 90%, transparent); border-bottom: 2px solid var(--ink); }
+html[data-theme="pop"] .topbar h1 { font-weight: 800; }
+html[data-theme="pop"] .topbar h1.home::before { content: "🌿 "; }
+html[data-theme="pop"] .icon-btn,
+html[data-theme="pop"] .sync { border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--ink); }
+html[data-theme="pop"] .sync { background: var(--surface); color: var(--text); font-weight: 700; }
+
+/* 状態のまとめ（タイル） */
+html[data-theme="pop"] .summary div { border: 2px solid var(--ink); box-shadow: var(--pop-shadow); color: var(--ink); font-weight: 700; }
+html[data-theme="pop"] .summary .water { background: var(--water); color: #fff; }
+html[data-theme="pop"] .summary .soon { background: var(--orange); }
+html[data-theme="pop"] .summary .ok { background: var(--primary); color: #fff; }
+html[data-theme="pop"] .summary .water b, html[data-theme="pop"] .summary .ok b { color: #fff; }
+html[data-theme="pop"] .summary .soon b { color: var(--ink); }
+
+/* カード・パネル */
+html[data-theme="pop"] .card,
+html[data-theme="pop"] .panel,
+html[data-theme="pop"] .trip-banner,
+html[data-theme="pop"] .viewer { border: 2px solid var(--ink); box-shadow: var(--pop-shadow); }
+html[data-theme="pop"] .card { border-left-width: 10px; }
+html[data-theme="pop"] .card.water { border-left-color: var(--water); }
+html[data-theme="pop"] .card.soon { border-left-color: var(--orange); }
+html[data-theme="pop"] .card.ok { border-left-color: var(--primary); }
+html[data-theme="pop"] .card.unknown { border-left-color: var(--muted); }
+html[data-theme="pop"] .card-name, html[data-theme="pop"] .plant-title { font-weight: 800; }
+html[data-theme="pop"] .card-weigh { background: var(--blue); color: #fff; border-left: 2px solid var(--ink); }
+html[data-theme="pop"] .thumb { border: 2px solid var(--ink); }
+html[data-theme="pop"] .panel.trip, html[data-theme="pop"] .panel.anomaly { border-left-width: 8px; }
+html[data-theme="pop"] .banner { border: 2px solid var(--ink); background: #FFE36E; color: #1B1B2F; }
+html[data-theme="pop"] .banner a { color: #1B1B2F; }
+
+/* 状態の印 */
+html[data-theme="pop"] .badge { border: 2px solid var(--ink); }
+html[data-theme="pop"] .badge.water { background: var(--water); color: #fff; }
+html[data-theme="pop"] .badge.soon { background: var(--orange); color: #1B1B2F; }
+html[data-theme="pop"] .badge.ok { background: var(--primary); color: #fff; }
+html[data-theme="pop"] .badge.unknown { background: var(--surface-2); color: var(--text); }
+html[data-theme="pop"] .card-alert { color: var(--water); }
+
+/* ボタン：ふちどりと、押すと沈む影 */
+html[data-theme="pop"] .btn,
+html[data-theme="pop"] .key,
+html[data-theme="pop"] .seg button,
+html[data-theme="pop"] .chip,
+html[data-theme="pop"] .tabs button.active {
+  border: 2px solid var(--ink); box-shadow: var(--pop-shadow); font-weight: 800;
+}
+html[data-theme="pop"] .btn.ghost { border-color: transparent; box-shadow: none; text-decoration: underline; text-underline-offset: 4px; }
+html[data-theme="pop"] .btn.primary { background: var(--primary); color: var(--primary-ink); }
+html[data-theme="pop"] .btn.danger { background: var(--water); color: #fff; }
+html[data-theme="pop"] .btn:active, html[data-theme="pop"] .key:active,
+html[data-theme="pop"] .seg button:active, html[data-theme="pop"] .chip:active,
+html[data-theme="pop"] .card-weigh:active {
+  transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink);
+}
+html[data-theme="pop"] .seg button.active { background: var(--blue); color: #fff; }
+html[data-theme="pop"] .chip.active { background: var(--blue); color: #fff; }
+html[data-theme="pop"] .chip.active .dot { box-shadow: 0 0 0 2px #fff; }
+html[data-theme="pop"] .key.fn { background: #FFE36E; color: #1B1B2F; }
+html[data-theme="pop"] .display { font-weight: 800; }
+html[data-theme="pop"] .tabs { border: 2px solid var(--ink); }
+html[data-theme="pop"] .tabs button.active { background: var(--orange); color: #1B1B2F; box-shadow: none; }
+
+/* 入力欄 */
+html[data-theme="pop"] .input { border: 2px solid var(--ink); }
+html[data-theme="pop"] .input:focus { outline: 3px solid var(--blue); border-color: var(--ink); }
+
+/* 記録の一覧・種別 */
+html[data-theme="pop"] .kind { border: 1.5px solid var(--ink); }
+html[data-theme="pop"] .kind.after { background: var(--blue); color: #fff; }
+html[data-theme="pop"] .kind.before { background: #FFE36E; color: #1B1B2F; }
+html[data-theme="pop"] .kind.regular { border-color: transparent; }
+html[data-theme="pop"] .tag { border: 1.5px solid var(--ink); background: var(--surface); font-weight: 700; }
+
+/* お知らせ・下のバー */
+html[data-theme="pop"] #toast { background: var(--ink); color: #fff; border: 2px solid #fff; box-shadow: var(--pop-shadow); }
+html[data-theme="pop"] .toast-undo { background: #FFE36E; color: #1B1B2F; border: 2px solid #fff; }
+html[data-theme="pop"] .bottombar { border-top: 2px solid var(--ink); }
+html[data-theme="pop"] .album-item { border: 2px solid var(--ink); }
+
+/* 暗い画面では、明るい緑・青の上の文字を濃い色にして読みやすくする */
+@media (prefers-color-scheme: dark) {
+  html[data-theme="pop"] .summary .ok, html[data-theme="pop"] .summary .ok b,
+  html[data-theme="pop"] .badge.ok,
+  html[data-theme="pop"] .card-weigh,
+  html[data-theme="pop"] .seg button.active, html[data-theme="pop"] .chip.active,
+  html[data-theme="pop"] .kind.after { color: #0B1426; }
+}

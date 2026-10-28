@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.5.0';
+  var APP_VERSION = '1.6.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -114,6 +114,15 @@
   }
 
   var config = readJSON(CONFIG_KEY, { url: '', passcode: '', demo: false });
+
+  /** デザイン：'pop'（ビビッド・はじめから）／'simple'（シンプル） */
+  function applyTheme() {
+    var theme = config.theme || 'pop';
+    document.documentElement.setAttribute('data-theme', theme);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'pop' ? '#0FA24A' : '#2f5d3a');
+  }
+  applyTheme();
   function saveConfig() { writeJSON(CONFIG_KEY, config); }
   function isConfigured() { return !!(config.url && config.passcode); }
 
@@ -398,11 +407,11 @@
     opts = opts || {};
     return '<header class="topbar">' +
       (opts.back ? '<button class="back" data-action="back">‹ 戻る</button>' : '') +
-      '<h1>' + h(title) + '</h1>' +
+      '<h1' + (opts.home ? ' class="home"' : '') + '>' + h(title) + '</h1>' +
       (opts.sync === false ? '' : syncBadgeHTML()) +
       (opts.gear ? '<button class="icon-btn" data-go="settings" aria-label="設定">' + ICONS.gear + '</button>' : '') +
       '</header>' +
-      (config.demo ? '<div class="banner">サンプルデータを表示中です（この端末だけに保存）。<a href="#/settings">設定</a>から本番の接続ができます。</div>' : '');
+      (config.demo && !opts.noBanner ? '<div class="banner">サンプルデータを表示中です（この端末だけに保存）。<a href="#/settings">設定</a>から本番の接続ができます。</div>' : '');
   }
 
   function thumbHTML(plant, cls) {
@@ -492,7 +501,7 @@
     var items = judged();
     var count = { water: 0, soon: 0, ok: 0 };
     items.forEach(function (it) { if (count[it.judge.status] !== undefined) count[it.judge.status]++; });
-    var html = topbar('ビカクログ', { gear: true }) + '<main>';
+    var html = topbar('ビカクログ', { gear: true, home: true }) + '<main>';
     if (!items.length) {
       html += '<div class="empty">' + ICONS.leaf + '<p>株がまだ登録されていません。<br>下のボタンから追加しましょう。</p></div>';
     } else {
@@ -547,7 +556,7 @@
     if (j.latest) ref.push('前回 ' + fmtWeight(j.latest.weight) + '（' + fmtDateTime(j.latest.at) + '）');
     if (j.target !== null) ref.push('目安 ' + fmtWeight(j.target));
 
-    var html = topbar('計量', { back: true }) + '<div class="weigh">' +
+    var html = topbar('計量', { back: true, noBanner: true }) + '<div class="weigh">' +
       '<div class="chips">' + items.map(function (it) {
         return '<button class="chip ' + (it.plant.id === ws.plantId ? 'active' : '') + '" data-weigh-plant="' + h(it.plant.id) + '">' +
           '<span class="dot ' + it.judge.status + '"></span>' + h(it.plant.name || '(名前なし)') + '</button>';
@@ -1336,6 +1345,10 @@
       '<div id="s-msg"></div></section>' +
       '<section class="panel"><h2>記録の取り込み</h2><p class="small">Google Keep などのメモに書いた過去の計量記録を、まとめて取り込めます。</p>' +
       '<button class="btn block" data-go="import/">メモからまとめて取り込む</button></section>' +
+      '<section class="panel"><h2>デザイン</h2><div class="seg" style="grid-template-columns:1fr 1fr">' +
+      [['pop', 'ビビッド'], ['simple', 'シンプル']].map(function (t) {
+        return '<button class="' + ((config.theme || 'pop') === t[0] ? 'active' : '') + '" data-action="theme" data-theme-name="' + t[0] + '">' + t[1] + '</button>';
+      }).join('') + '</div></section>' +
       '<section class="panel"><h2>地域（天気）</h2>' +
       '<p class="small" style="font-size:16px">いまの設定：<b>' + h(config.place ? config.place.name : '未設定') + '</b>' +
       (currentWeather() ? '<br>天気の更新：' + h(fmtAgo(currentWeather().fetchedAt)) : '') +
@@ -1494,6 +1507,10 @@
         config.place = null; saveConfig(); evalCache = {}; toast('天気を使わない設定にしました'); render();
         break;
       case 'album-compare': openCompare(r.id); break;
+      case 'theme':
+        config.theme = el.getAttribute('data-theme-name');
+        saveConfig(); applyTheme(); viewSettings();
+        break;
       case 'anomaly-dismiss':
         config.dismissed = config.dismissed || {};
         config.dismissed[el.getAttribute('data-id')] = Number(el.getAttribute('data-at'));

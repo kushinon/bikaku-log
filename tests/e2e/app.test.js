@@ -377,3 +377,18 @@ test('いつもと違う乾き方：同じ時期より速く乾いていると�
   assert.equal(await page.locator('.card-alert').count(), 0);
   assert.deepEqual(page.errors, []);
 });
+
+test('デザイン：はじめはビビッドで、設定からシンプルに切り替えられる', async (t) => {
+  const { ctx, page } = await openApp(web, { demo: true });
+  t.after(() => ctx.close());
+  await page.waitForSelector('.card');
+  assert.equal(await page.getAttribute('html', 'data-theme'), 'pop');
+  await page.goto(web.url + '#/settings');
+  await page.click('[data-theme-name="simple"]');
+  assert.equal(await page.getAttribute('html', 'data-theme'), 'simple');
+  await page.reload();                          // 開き直しても覚えている
+  await page.waitForSelector('[data-theme-name="simple"].active');
+  assert.equal(await page.getAttribute('html', 'data-theme'), 'simple');
+  await page.click('[data-theme-name="pop"]');
+  assert.equal(await page.getAttribute('html', 'data-theme'), 'pop');
+});
