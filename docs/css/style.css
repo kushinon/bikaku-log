@@ -298,11 +298,21 @@ textarea.input { min-height: 96px; resize: vertical; }
 .msg.err { background: var(--water-soft); color: var(--water); }
 
 #toast {
-  position: fixed; left: 50%; bottom: calc(100px + var(--safe-bottom)); transform: translateX(-50%) translateY(20px);
+  /* 画面の上に出す（下の計量キーやボタンを隠さないように） */
+  position: fixed; left: 50%; top: calc(72px + var(--safe-top)); transform: translateX(-50%) translateY(-12px);
   background: var(--text); color: var(--bg); padding: 12px 20px; border-radius: 14px; font-size: 17px; font-weight: 600;
   opacity: 0; pointer-events: none; transition: all .2s; z-index: 50; max-width: calc(100% - 32px); text-align: center;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.has-action {
+  pointer-events: auto; display: flex; align-items: center; gap: 12px; text-align: left;
+  width: min(440px, calc(100% - 32px)); padding: 10px 10px 10px 16px;
+}
+#toast.has-action span { flex: 1; min-width: 0; font-size: 16px; }
+.toast-undo {
+  flex-shrink: 0; border: 0; border-radius: 10px; padding: 8px 12px; min-height: 40px;
+  background: var(--bg); color: var(--text); font-size: 16px; font-weight: 700;
+}
 
 @media (min-width: 760px) {
   .weigh { max-width: 480px; margin: 0 auto; min-height: auto; }
@@ -364,3 +374,8 @@ textarea.input { min-height: 96px; resize: vertical; }
 .trip-text { min-width: 0; }
 .trip-text b { display: block; font-size: 17px; }
 .trip-text small { display: block; color: var(--text-2); font-size: 14px; line-height: 1.45; }
+
+/* ---------- いつもと違う乾き方 ---------- */
+.card-alert { font-size: 14px; font-weight: 700; color: var(--soon); }
+.panel.anomaly { background: var(--soon-soft); }
+.panel.anomaly p { margin: 0 0 8px; }

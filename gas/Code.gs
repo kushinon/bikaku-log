@@ -384,7 +384,10 @@ var BikakuShared = (function () {
     WEATHER_MIN: 0.6,      // 天気による乾きやすさの補正の下限（ふだんの0.6倍）
     WEATHER_MAX: 1.6,      // 同じく上限（ふだんの1.6倍）
     BACKTEST_CYCLES: 6,    // 予測の精度を確かめる過去のサイクル数
-    TRIP_MARGIN_DAYS: 0.5  // 留守の計画：帰宅の半日後までに水やり時期が来る株は、出発前に水やりする
+    TRIP_MARGIN_DAYS: 0.5, // 留守の計画：帰宅の半日後までに水やり時期が来る株は、出発前に水やりする
+    ANOMALY_FAST: 1.5,     // いつもの1.5倍以上の速さで減っていたら「乾くのが速い」
+    ANOMALY_SLOW: 0.6,     // いつもの0.6倍以下なら「乾くのが遅い」
+    ANOMALY_MIN_CYCLES: 3  // 比べるのに必要な過去の水やりサイクル数
   };
 
   var KINDS = {
@@ -735,6 +738,79 @@ var BikakuShared = (function () {
     return r;
   }
 
+  /** 過去のサイクルの中で、水やりから offset ミリ秒後の重さを、前後の記録から計算する */
+  function weightAtOffset(cycle, offset) {
+    for (var i = 1; i < cycle.length; i++) {
+      var a = cycle[i - 1], b = cycle[i];
+      var oa = a.at - cycle[0].at, ob = b.at - cycle[0].at;
+      if (offset >= oa && offset <= ob) {
+        return ob === oa ? b.weight : a.weight + (b.weight - a.weight) * (offset - oa) / (ob - oa);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * いつもと違う乾き方を見つける
+   * 今回の水やりのあとの減り方と、過去の水やりの「同じ時期（水やりから○日目〜○日目）」の減り方を比べる。
+   * 天気のデータがあれば、乾きやすさの違いの分を差し引いて比べる
+   * @return {null | {type: 'fast'|'slow', ratio, currentRate, usualRate, cycles, weatherRatio, wateredAt}}
+   */
+  function detectAnomaly(plant, logs, opts) {
+    opts = opts || {};
+    var all = plantLogs(plant.id, logs);
+    var resetIdx = -1;
+    all.forEach(function (l, i) { if (l.memo && RESET_RE.test(l.memo)) resetIdx = i; });
+    var sorted = resetIdx > 0 ? all.slice(resetIdx) : all;
+
+    // サイクル（水やり後 → 次の水やり前）に分ける。最後の「水やり後」からは今回のサイクル
+    var cycles = [], cur = null;
+    sorted.forEach(function (l) {
+      if (l.kind === 'after') { cur = [l]; cycles.push(cur); }
+      else if (cur) {
+        cur.push(l);
+        if (l.kind === 'before') cur = null;
+      }
+    });
+    var current = cycles.length ? cycles[cycles.length - 1] : null;
+    if (!current || current[current.length - 1].kind === 'before') return null;   // 今は水やり待ち
+    var points = current.slice(1);   // 水やり直後の急な減りは除く
+    if (points.length < 2) return null;
+    var o1 = points[0].at - current[0].at, o2 = points[points.length - 1].at - current[0].at;
+    if (o2 - o1 < DAY) return null;  // 1日以上の間がないと比べられない
+    var currentRate = dryingRate(points);
+    if (currentRate === null) return null;
+
+    var past = cycles.slice(0, -1).filter(function (c) { return c[c.length - 1].kind === 'before'; }).slice(-CONFIG.TARGET_SAMPLES);
+    var rates = [], spans = [];
+    past.forEach(function (c) {
+      var w1 = weightAtOffset(c, o1), w2 = weightAtOffset(c, o2);
+      if (w1 === null || w2 === null || w1 <= w2) return;
+      rates.push((w1 - w2) / ((o2 - o1) / DAY));
+      spans.push([c[0].at + o1, c[0].at + o2]);
+    });
+    if (rates.length < CONFIG.ANOMALY_MIN_CYCLES) return null;
+    var usualRate = median(rates);
+    var ratio = currentRate / usualRate;
+
+    // 天気の違いで説明できる分を差し引く
+    var weatherRatio = null;
+    if (opts.weather) {
+      var vNow = meanVpd(opts.weather, [[points[0].at, points[points.length - 1].at]]);
+      var vUsual = meanVpd(opts.weather, spans);
+      if (vNow && vUsual) {
+        weatherRatio = Math.min(CONFIG.WEATHER_MAX, Math.max(CONFIG.WEATHER_MIN, Math.sqrt(vNow / vUsual)));
+        ratio = ratio / weatherRatio;
+      }
+    }
+    var type = ratio >= CONFIG.ANOMALY_FAST ? 'fast' : ratio <= CONFIG.ANOMALY_SLOW ? 'slow' : null;
+    if (!type) return null;
+    return {
+      type: type, ratio: ratio, currentRate: currentRate, usualRate: usualRate,
+      cycles: rates.length, weatherRatio: weatherRatio, wateredAt: current[0].at
+    };
+  }
+
   function finish(r) {
     r.statusLabel = STATUS[r.status].label;
     r.statusOrder = STATUS[r.status].order;
@@ -862,6 +938,7 @@ var BikakuShared = (function () {
     judgePlant: judgePlant,
     evaluatePlant: evaluatePlant,
     planAbsence: planAbsence,
+    detectAnomaly: detectAnomaly,
     dayKey: dayKey,
     sortByUrgency: sortByUrgency,
     plantLogs: plantLogs,

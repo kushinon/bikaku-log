@@ -191,3 +191,59 @@ test('留守の計画：目安重量がない株は「記録が足りない」',
   const r = S.planAbsence(plant(), [log(0, 900, 'after'), log(1, 850)], T0 + 2 * DAY, T0 + 5 * DAY, { now: T0 + 1.1 * DAY });
   assert.equal(r.kind, 'unknown');
 });
+
+// ---------- いつもと違う乾き方 ----------
+
+// 4日ごとに水やり。水やり直後は速く、あとはゆっくり減る（1日目 -150g、2〜4日目 -80g/日）
+function anomalyLogs(currentDrops) {
+  const logs = [];
+  let day = 0;
+  for (let c = 0; c < 4; c++) {
+    logs.push(log(day, 1000, 'after'), log(day + 1, 850), log(day + 2, 770), log(day + 3, 690), log(day + 4 - 0.01, 610, 'before'));
+    day += 4;
+  }
+  logs.push(log(day, 1000, 'after'));
+  let w = 1000;
+  currentDrops.forEach((d, i) => { w -= d; logs.push(log(day + i + 1, w)); });
+  return { logs, now: T0 + (day + currentDrops.length + 0.1) * DAY };
+}
+
+test('乾き方：いつもどおりなら知らせない', () => {
+  const { logs } = anomalyLogs([150, 80, 80]);
+  assert.equal(S.detectAnomaly(plant(), logs), null);
+});
+
+test('乾き方：同じ時期と比べて速いと「速い」', () => {
+  const { logs } = anomalyLogs([150, 140, 140]);
+  const a = S.detectAnomaly(plant(), logs);
+  assert.equal(a.type, 'fast');
+  assert.ok(Math.abs(a.usualRate - 80) < 1 && Math.abs(a.currentRate - 140) < 1, JSON.stringify(a));
+  assert.equal(a.cycles, 4);
+});
+
+test('乾き方：水やり直後の速い減りは「速い」と見なさない（同じ時期どうしで比べる）', () => {
+  // 1日目の大きな減り（150g）は除いて、2〜3日目の減り方で比べる
+  const { logs } = anomalyLogs([200, 80, 80]);
+  assert.equal(S.detectAnomaly(plant(), logs), null);
+});
+
+test('乾き方：遅いと「遅い」', () => {
+  const { logs } = anomalyLogs([150, 30, 30]);
+  assert.equal(S.detectAnomaly(plant(), logs).type, 'slow');
+});
+
+test('乾き方：天気が乾きやすかった分は差し引く', () => {
+  const { logs } = anomalyLogs([150, 125, 125]);   // いつもの約1.56倍
+  const dryNow = weatherFrom(d => (d >= 16 ? 1.6 : 0.8));   // 今回だけ乾きやすい（√2 ≒ 1.4倍）
+  assert.equal(S.detectAnomaly(plant(), logs).type, 'fast');                 // 天気を考えなければ「速い」
+  assert.equal(S.detectAnomaly(plant(), logs, { weather: dryNow }), null);   // 天気のせいなので知らせない
+  const { logs: fast } = anomalyLogs([150, 180, 180]);                      // 天気を差し引いても速い
+  const a = S.detectAnomaly(plant(), fast, { weather: dryNow });
+  assert.equal(a.type, 'fast');
+  assert.ok(a.weatherRatio > 1.3);
+});
+
+test('乾き方：過去のサイクルが3回に満たないと判定しない', () => {
+  const logs = [log(0, 1000, 'after'), log(1, 850), log(2, 770), log(4, 610, 'before'), log(4.01, 1000, 'after'), log(5, 850), log(6, 700), log(7, 550)];
+  assert.equal(S.detectAnomaly(plant(), logs), null);
+});

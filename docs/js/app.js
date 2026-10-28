@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.4.0';
+  var APP_VERSION = '1.5.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -78,12 +78,29 @@
   };
   var STATUS_ICON = { water: '💧', soon: '⏳', ok: '✓', unknown: '…' };
 
-  function toast(msg) {
+  /**
+   * 画面の下に短いお知らせを出す
+   * undo を渡すと「元に戻す」ボタンを付けて、少し長めに表示する
+   */
+  function toast(msg, undo) {
     var el = $('#toast');
-    el.textContent = msg;
+    el.innerHTML = '<span>' + h(msg) + '</span>' + (undo ? '<button type="button" class="toast-undo">元に戻す</button>' : '');
+    el.classList.toggle('has-action', !!undo);
     el.classList.add('show');
+    if (undo) {
+      el.querySelector('.toast-undo').addEventListener('click', function () {
+        undo();
+        toast('取り消しました');
+      });
+    }
     clearTimeout(toast.t);
-    toast.t = setTimeout(function () { el.classList.remove('show'); }, 2600);
+    toast.t = setTimeout(function () { el.classList.remove('show'); el.classList.remove('has-action'); }, undo ? 6000 : 2600);
+  }
+
+  /** 取り消し後に、今の画面を描き直す（開いている入力画面はそのまま） */
+  function refreshAfterUndo() {
+    if (currentRoute().name === 'weigh' && weighState) viewWeigh(weighState.plantId);
+    else render();
   }
 
   // ---------------- 設定とデータの保存 ----------------
@@ -170,6 +187,9 @@
     var j = S.judgePlant(p, logs, now, useWeather ? { weather: weather } : {});
     j.accuracy = ev;
     j.weatherAvailable = !!weather;
+    var an = S.detectAnomaly(p, logs, { weather: weather });
+    var dismissed = config.dismissed || {};
+    j.anomaly = an && dismissed[p.id] !== an.wateredAt ? an : null;
     return j;
   }
 
@@ -492,6 +512,7 @@
           '<div>' + badgeHTML(j) + '</div>' +
           '<div class="card-meta">' + h(meta.join('')) + '</div>' +
           (when ? '<div class="card-meta">' + h(when) + '</div>' : '') +
+          (j.anomaly ? '<div class="card-alert">⚠ 乾くのがいつもより' + (j.anomaly.type === 'fast' ? '速い' : '遅い') + '</div>' : '') +
           '</div></button>' +
           '<button class="card-weigh" data-go="weigh/' + h(encodeURIComponent(p.id)) + '" aria-label="' + h(p.name) + 'を計量">' + ICONS.scale + '計量</button>' +
           '</div>';
@@ -592,19 +613,21 @@
     var ws = weighState;
     var v = parseFloat(ws.value);
     if (!(isFinite(v) && v > 0)) return;
-    put('logs', {
+    var rec = {
       id: uuid(), plantId: ws.plantId, at: ws.at || Date.now(), weight: Math.round(v * 10) / 10,
       kind: ws.kind, memo: ws.reset && !S.RESET_RE.test(ws.memo || '') ? ['仕立て直し', ws.memo].filter(Boolean).join('・') : (ws.memo || ''), deleted: false
-    });
+    };
+    put('logs', rec);
+    var undo = function () { put('logs', Object.assign({}, rec, { deleted: true })); refreshAfterUndo(); };
     var plant = state.plants[ws.plantId];
     if (ws.kind === 'before') {
       // 水やり前のあとは、続けて水やり後を記録しやすくする
       weighState = { plantId: ws.plantId, value: '', kind: 'after', at: null, memo: '' };
-      toast('保存しました。水やり後の重さも続けて記録できます');
+      toast('保存しました。水やり後の重さも続けて記録できます', undo);
       viewWeigh(ws.plantId);
     } else {
       weighState = null;
-      toast((plant ? plant.name + '：' : '') + fmtWeight(v) + ' を保存しました');
+      toast((plant ? plant.name + '：' : '') + fmtWeight(v) + ' を保存しました', undo);
       history.length > 1 ? history.back() : go('');
     }
   }
@@ -628,6 +651,7 @@
     html += '<div class="actions"><button class="btn primary grow" data-go="weigh/' + h(encodeURIComponent(p.id)) + '">' + ICONS.scale + '計量する</button>' +
       '<button class="btn" data-go="edit/' + h(encodeURIComponent(p.id)) + '">編集</button></div>';
 
+    html += anomalyPanel(p, j);
     html += '<section class="panel"><div class="status-big">' + badgeHTML(j) +
       '<span class="when">' + h(daysText(j)) + '</span></div><dl class="kv">' +
       '<dt>最新の重さ</dt><dd>' + (j.latest ? fmtWeight(j.latest.weight) + ' <small class="small">' + h(fmtDateTime(j.latest.at)) + '</small>' : '—') + '</dd>' +
@@ -674,6 +698,24 @@
     app.innerHTML = html;
     drawChart($('#chart'), sorted, j, viewState.chartRange);
     renderAlbum(p.id);
+  }
+
+  /** いつもと違う乾き方のお知らせ（詳細画面） */
+  function anomalyPanel(p, j) {
+    var a = j.anomaly;
+    if (!a) return '';
+    var times = Math.round(a.ratio * 10) / 10;
+    var html = '<section class="panel anomaly ' + a.type + '"><h2>⚠ 乾くのがいつもより' + (a.type === 'fast' ? '速くなっています' : '遅くなっています') + '</h2>' +
+      '<p>' + h(fmtDate(a.wateredAt)) + 'の水やりのあと、1日あたり約' + Math.round(a.currentRate) + 'g減っています。' +
+      'いつもの同じ時期（水やりから同じくらいの日数）は約' + Math.round(a.usualRate) + 'gなので、' +
+      (a.type === 'fast' ? '約' + times + '倍の速さです。' : 'いつもの約' + times + '倍の遅さです。') + '</p>' +
+      '<p class="small">' + (a.type === 'fast'
+        ? '暑さや乾燥、風の当たり方、置き場所の変化のほか、水苔が傷んで水を保ちにくくなっていることもあります。いつもより早めに様子を見てください。'
+        : '寒さや日当たりの変化のほか、根が傷んで水を吸えていないこともあります。葉の色やハリ、根元のにおいなども確かめてください。') +
+      (a.weatherRatio ? '（天気による乾きやすさの違いは差し引いて比べています）' : '') +
+      '（過去' + a.cycles + '回の水やりと比べています）</p>' +
+      '<button class="btn small" data-action="anomaly-dismiss" data-id="' + h(p.id) + '" data-at="' + a.wateredAt + '">わかった（今回は表示しない）</button></section>';
+    return html;
   }
 
   function fmtDays(d) { return '±' + (Math.round(d * 10) / 10) + '日'; }
@@ -1007,7 +1049,11 @@
     o.querySelector('[data-v=delete]').addEventListener('click', function () {
       if (!confirm('この写真を削除しますか？')) return;
       put('photos', Object.assign({}, ph, { pending: undefined, deleted: true }));
-      toast('削除しました'); closeOverlay(); renderAlbum(plantId);
+      toast('写真を削除しました', function () {
+        put('photos', Object.assign({}, ph, { pending: undefined, deleted: false }));
+        renderAlbum(plantId);
+      });
+      closeOverlay(); renderAlbum(plantId);
     });
   }
 
@@ -1145,9 +1191,10 @@
       e.preventDefault();
       var w = parseFloat($('#l-weight').value);
       if (!(w > 0)) { toast('重さを数字で入れてください'); return; }
+      var before = Object.assign({}, l);
       var rec = Object.assign({}, l, { weight: Math.round(w * 10) / 10, kind: kind, at: fromLocalInput($('#l-at').value), memo: $('#l-memo').value });
       put('logs', rec);
-      toast('修正しました');
+      toast('修正しました', function () { put('logs', Object.assign({}, before, { updatedAt: rec.updatedAt })); refreshAfterUndo(); });
       history.back();
     });
   }
@@ -1259,15 +1306,21 @@
     var is = importState;
     var list = is.entries.filter(function (e) { return e.checked; });
     if (!list.length) return;
-    list.forEach(function (e) {
-      put('logs', { id: uuid(), plantId: is.plantId, at: e.at, weight: e.weight, kind: e.kind, memo: e.memo || '', deleted: false }, true);
+    var added = list.map(function (e) {
+      var rec = { id: uuid(), plantId: is.plantId, at: e.at, weight: e.weight, kind: e.kind, memo: e.memo || '', deleted: false };
+      put('logs', rec, true);
+      return rec;
     });
     saveState();
     renderSyncBadge();
     scheduleSync(300);
     var plantId = is.plantId;
     importState = null;
-    toast(list.length + '件を取り込みました');
+    toast(list.length + '件を取り込みました', function () {
+      added.forEach(function (rec) { put('logs', Object.assign({}, rec, { deleted: true }), true); });
+      saveState(); renderSyncBadge(); scheduleSync(300);
+      refreshAfterUndo();
+    });
     location.replace('#/plant/' + encodeURIComponent(plantId));
   }
 
@@ -1400,14 +1453,17 @@
         var p3 = state.plants[r.id];
         if (!p3 || !confirm('「' + p3.name + '」を削除しますか？')) break;
         put('plants', Object.assign({}, p3, { deleted: true }));
-        editDraft = null; toast('削除しました'); location.replace('#/');
+        editDraft = null;
+        toast('「' + p3.name + '」を削除しました', function () { put('plants', Object.assign({}, state.plants[p3.id], { deleted: false })); refreshAfterUndo(); });
+        location.replace('#/');
         break;
       }
       case 'log-delete': {
         var l = state.logs[el.getAttribute('data-id')];
         if (!l || !confirm('この記録を削除しますか？')) break;
         put('logs', Object.assign({}, l, { deleted: true }));
-        toast('削除しました'); history.back();
+        toast('記録を削除しました', function () { put('logs', Object.assign({}, state.logs[l.id], { deleted: false })); refreshAfterUndo(); });
+        history.back();
         break;
       }
       case 'toggle-pass': {
@@ -1438,6 +1494,11 @@
         config.place = null; saveConfig(); evalCache = {}; toast('天気を使わない設定にしました'); render();
         break;
       case 'album-compare': openCompare(r.id); break;
+      case 'anomaly-dismiss':
+        config.dismissed = config.dismissed || {};
+        config.dismissed[el.getAttribute('data-id')] = Number(el.getAttribute('data-at'));
+        saveConfig(); render();
+        break;
       case 'trip-save': {
         var leave = fromLocalInput($('#t-leave').value), ret = fromLocalInput($('#t-return').value);
         if (!(ret > leave)) { toast('帰宅は出発よりあとの日時にしてください'); break; }

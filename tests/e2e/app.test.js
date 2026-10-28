@@ -321,3 +321,59 @@ test('留守のときの水やり計画：留守中に乾く株と、出発前�
   assert.equal(await page.locator('.trip-banner').count(), 0);
   assert.deepEqual(page.errors, []);
 });
+
+test('取り消し：保存した記録を「元に戻す」で取り消せる', async (t) => {
+  const gas = await startGas();
+  t.after(() => closeServer(gas));
+  const { ctx, page } = await openApp(web, { gas });
+  t.after(() => ctx.close());
+  await addPlant(page, '取り消し株');
+  await page.click('.actions .btn.primary');
+  await typeWeight(page, '640');
+  await page.click('#w-save');
+  await page.waitForSelector('.toast-undo');
+  await page.click('.toast-undo');
+  await page.waitForSelector('text=取り消しました');
+  await waitSynced(page);
+  assert.equal(await page.locator('.logs li').count(), 0);
+  const rows = serverRows(gas, '記録');
+  assert.ok(rows.every(r => r[8] === true), '送ったあとの記録も削除の印になる');
+  // 記録の削除も取り消せる
+  await page.click('.actions .btn.primary');
+  await typeWeight(page, '630');
+  await page.click('#w-save');
+  await page.waitForSelector('.logs li');
+  await page.locator('.logs li button').first().click();
+  page.once('dialog', d => d.accept());
+  await page.click('[data-action=log-delete]');
+  await page.waitForSelector('.toast-undo');
+  await page.click('.toast-undo');
+  await page.waitForSelector('.logs li');
+  assert.equal(await page.locator('.logs li').count(), 1);
+});
+
+test('いつもと違う乾き方：同じ時期より速く乾いていると知らせ、「わかった」で消せる', async (t) => {
+  const day = 864e5, now = Date.now();
+  const start = now - 18 * day;
+  const logs = [];
+  const add = (d, w, kind) => logs.push({ id: 'x' + logs.length, plantId: 'p', at: start + d * day, weight: w, kind, memo: '', updatedAt: 1, deleted: false });
+  for (let c = 0; c < 4; c++) {
+    const d = c * 4;
+    add(d, 1000, 'after'); add(d + 1, 850, 'regular'); add(d + 2, 770, 'regular'); add(d + 3, 690, 'regular'); add(d + 3.99, 610, 'before');
+  }
+  add(16, 1000, 'after'); add(16.4, 880, 'regular'); add(17.6, 650, 'regular');   // いつもの同じ時期より速い
+  const state = { plants: { p: { id: 'p', name: '速い株', variety: '', location: '', style: 'board', memo: '', photo: '', targetWeight: '', createdAt: 1, updatedAt: 1, deleted: false } }, logs: {}, outbox: [], since: 0, lastSyncAt: 0 };
+  logs.forEach(l => { state.logs[l.id] = l; });
+  const { ctx, page } = await openApp(web, { demo: true, state });
+  t.after(() => ctx.close());
+  await page.waitForSelector('.card');
+  assert.match(await page.locator('.card-alert').textContent(), /いつもより速い/);
+  await page.locator('.card-main').first().click();
+  await page.waitForSelector('.panel.anomaly');
+  assert.match(await page.locator('.panel.anomaly').textContent(), /1日あたり約\d+g減っています/);
+  await page.click('[data-action=anomaly-dismiss]');
+  assert.equal(await page.locator('.panel.anomaly').count(), 0);
+  await page.goto(web.url + '#/');
+  assert.equal(await page.locator('.card-alert').count(), 0);
+  assert.deepEqual(page.errors, []);
+});
