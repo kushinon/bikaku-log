@@ -295,3 +295,29 @@ test('一度開いたあとは、サーバーにつながらなくても開け�
   await page.waitForSelector('.card', { timeout: 15000 });
   assert.equal(await page.locator('.card').count(), 3);
 });
+
+test('留守のときの水やり計画：留守中に乾く株と、出発前の水やりを知らせる', async (t) => {
+  const { ctx, page } = await openApp(web, { demo: true });
+  t.after(() => ctx.close());
+  await page.waitForSelector('.card');
+  await page.click('text=留守のときの水やり計画');
+  await page.waitForSelector('#t-leave');
+  // 明日の朝から5日間の留守（サンプルの株は4日・6日・8日ごとに水やり）
+  const leave = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.getTime(); });
+  const toInput = ms => { const d = new Date(ms + 9 * 3600e3); return d.toISOString().slice(0, 16); };
+  await page.fill('#t-leave', toInput(leave));
+  await page.fill('#t-return', toInput(leave + 5 * 864e5));
+  await page.click('[data-action=trip-save]');
+  await page.waitForSelector('.panel.trip');
+  const titles = (await page.locator('.panel.trip h2').allTextContents()).join(' / ');
+  assert.match(titles, /帰宅前に乾きそう（1株）/);    // 4日ごとのリドレイは5日もたない
+  assert.match(titles, /出発の直前に水やりを（1株）/);  // 6日ごとのネザーランドは出発前の水やりで持つ
+  assert.match(titles, /何もしなくて大丈夫（1株）/);    // ビーチーは帰宅後まで大丈夫
+  await page.goto(web.url + '#/');
+  assert.match(await page.locator('.trip-banner').textContent(), /留守の予定.*注意 \d株/);
+  await page.click('.trip-banner');
+  await page.click('[data-action=trip-clear]');
+  await page.goto(web.url + '#/');
+  assert.equal(await page.locator('.trip-banner').count(), 0);
+  assert.deepEqual(page.errors, []);
+});

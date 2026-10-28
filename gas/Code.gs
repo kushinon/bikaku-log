@@ -383,7 +383,8 @@ var BikakuShared = (function () {
     HISTORY_CYCLES: 3,     // 予測の補助に使う過去の水やりサイクル数
     WEATHER_MIN: 0.6,      // 天気による乾きやすさの補正の下限（ふだんの0.6倍）
     WEATHER_MAX: 1.6,      // 同じく上限（ふだんの1.6倍）
-    BACKTEST_CYCLES: 6     // 予測の精度を確かめる過去のサイクル数
+    BACKTEST_CYCLES: 6,    // 予測の精度を確かめる過去のサイクル数
+    TRIP_MARGIN_DAYS: 0.5  // 留守の計画：帰宅の半日後までに水やり時期が来る株は、出発前に水やりする
   };
 
   var KINDS = {
@@ -689,6 +690,51 @@ var BikakuShared = (function () {
     };
   }
 
+  /**
+   * 留守のときの水やり計画
+   * 出発（leaveAt）から帰宅（returnAt）までの間に、株がどうなるかを判定する
+   * @return {{kind, judge, cycleDays, dueAt, emptyAt, spareDays, shortDays}}
+   *   kind: 'ok'（何もしなくてよい）／'water-before'（出発直前に水やりすれば帰宅まで持つ）／
+   *         'too-long'（出発直前に水やりしても、帰宅前に乾く見込み）／'unknown'（記録が足りない）
+   */
+  function planAbsence(plant, logs, leaveAt, returnAt, opts) {
+    opts = opts || {};
+    var j = opts.judge || judgePlant(plant, logs, opts.now || Date.now(), opts);
+    var r = { kind: 'unknown', judge: j, cycleDays: null, dueAt: j.predictedAt, emptyAt: null, spareDays: null, shortDays: null };
+    if (j.target === null) return r;
+
+    // 水やりしてから、水やり時期になるまでの日数（過去のサイクルの中央値と、今の減り方からの計算の短い方）
+    var all = plantLogs(plant.id, logs);
+    var resetIdx = -1;
+    all.forEach(function (l, i) { if (l.memo && RESET_RE.test(l.memo)) resetIdx = i; });
+    var sorted = resetIdx > 0 ? all.slice(resetIdx) : all;
+    var durations = [], afters = [], lastAfter = null;
+    sorted.forEach(function (l) {
+      if (l.kind === 'after') { lastAfter = l; afters.push(l.weight); }
+      else if (l.kind === 'before' && lastAfter) { durations.push((l.at - lastAfter.at) / DAY); lastAfter = null; }
+    });
+    var fromHistory = median(durations.slice(-CONFIG.TARGET_SAMPLES));
+    var afterWeight = median(afters.slice(-CONFIG.TARGET_SAMPLES));
+    var fromRate = afterWeight !== null && j.ratePerDay ? (afterWeight - j.target) / j.ratePerDay : null;
+    var cycle = fromHistory !== null && fromRate !== null ? Math.min(fromHistory, fromRate) : (fromHistory !== null ? fromHistory : fromRate);
+    if (cycle === null || cycle <= 0) return r;
+    r.cycleDays = cycle;
+
+    if (j.status !== 'water' && j.predictedAt !== null && j.predictedAt >= returnAt + CONFIG.TRIP_MARGIN_DAYS * DAY) {
+      r.kind = 'ok';
+      return r;
+    }
+    r.emptyAt = leaveAt + cycle * DAY;
+    if (r.emptyAt >= returnAt) {
+      r.kind = 'water-before';
+      r.spareDays = (r.emptyAt - returnAt) / DAY;
+    } else {
+      r.kind = 'too-long';
+      r.shortDays = (returnAt - r.emptyAt) / DAY;
+    }
+    return r;
+  }
+
   function finish(r) {
     r.statusLabel = STATUS[r.status].label;
     r.statusOrder = STATUS[r.status].order;
@@ -815,6 +861,7 @@ var BikakuShared = (function () {
     DAY: DAY,
     judgePlant: judgePlant,
     evaluatePlant: evaluatePlant,
+    planAbsence: planAbsence,
     dayKey: dayKey,
     sortByUrgency: sortByUrgency,
     plantLogs: plantLogs,

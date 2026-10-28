@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.3.1';
+  var APP_VERSION = '1.4.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -331,7 +331,7 @@
 
   function isEditing() {
     var r = currentRoute();
-    return r.name === 'edit' || r.name === 'weigh' || r.name === 'log' || r.name === 'settings' || r.name === 'import';
+    return r.name === 'edit' || r.name === 'weigh' || r.name === 'log' || r.name === 'settings' || r.name === 'import' || r.name === 'trip';
   }
 
   function syncInfo() {
@@ -370,7 +370,7 @@
   function render() {
     var r = currentRoute();
     if (!config.demo && !isConfigured() && r.name !== 'settings') r = { name: 'welcome' };
-    var views = { home: viewHome, plant: viewPlant, weigh: viewWeigh, edit: viewEdit, log: viewLog, settings: viewSettings, welcome: viewWelcome, import: viewImport };
+    var views = { home: viewHome, plant: viewPlant, weigh: viewWeigh, edit: viewEdit, log: viewLog, settings: viewSettings, welcome: viewWelcome, import: viewImport, trip: viewTrip };
     (views[r.name] || viewHome)(r.id);
   }
 
@@ -394,6 +394,79 @@
     return '<span class="badge ' + j.status + '">' + STATUS_ICON[j.status] + ' ' + h(j.statusLabel) + '</span>';
   }
 
+  // ----- 留守のときの水やり計画 -----
+
+  /** 帰宅前の留守の予定（なければ null） */
+  function activeTrip() {
+    var t = config.trip;
+    return t && t.returnAt > Date.now() ? t : null;
+  }
+
+  function tripPlans(items, trip) {
+    var logs = logsList();
+    return items.map(function (it) {
+      return { plant: it.plant, plan: S.planAbsence(it.plant, logs, trip.leaveAt, trip.returnAt, { judge: it.judge }) };
+    });
+  }
+
+  function tripBanner(items) {
+    var trip = activeTrip();
+    if (!trip) return '';
+    var plans = tripPlans(items, trip);
+    var n = function (k) { return plans.filter(function (x) { return x.plan.kind === k; }).length; };
+    var parts = [];
+    if (n('too-long')) parts.push('⚠️ 注意 ' + n('too-long') + '株');
+    if (n('water-before')) parts.push('💧 出発前に水やり ' + n('water-before') + '株');
+    if (!parts.length) parts.push('✓ 水やりの必要な株はありません');
+    return '<button class="trip-banner' + (n('too-long') ? ' warn' : '') + '" data-go="trip"><b>🧳 留守の予定 ' + h(fmtDate(trip.leaveAt)) + '〜' + h(fmtDate(trip.returnAt)) + '</b>' +
+      '<span>' + h(parts.join('・')) + '</span></button>';
+  }
+
+  function viewTrip() {
+    var trip = activeTrip();
+    var leave = trip ? trip.leaveAt : (function () { var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d.getTime(); })();
+    var ret = trip ? trip.returnAt : leave + 3 * S.DAY + 9 * 3600 * 1000;
+    var html = topbar('留守のときの水やり計画', { back: true, sync: false }) + '<main>' +
+      '<p class="small" style="font-size:16px">出かける日と帰る日を入れると、留守の間に水やり時期になる株と、出発前にしておくことを調べます。</p>' +
+      '<div class="field"><label for="t-leave">出発</label><input class="input" type="datetime-local" id="t-leave" value="' + toLocalInput(leave) + '"></div>' +
+      '<div class="field"><label for="t-return">帰宅</label><input class="input" type="datetime-local" id="t-return" value="' + toLocalInput(ret) + '"></div>' +
+      '<div class="stack"><button class="btn primary block" data-action="trip-save">' + (trip ? '予定を変えて調べ直す' : 'この予定で調べる') + '</button>' +
+      (trip ? '<button class="btn ghost block" data-action="trip-clear">予定を消す</button>' : '') + '</div>';
+
+    if (trip) {
+      var days = (trip.returnAt - trip.leaveAt) / S.DAY;
+      var plans = tripPlans(judged(), trip);
+      var group = function (kind) { return plans.filter(function (x) { return x.plan.kind === kind; }); };
+      var row = function (x, text) {
+        return '<li><button data-go="plant/' + h(encodeURIComponent(x.plant.id)) + '">' + thumbHTML(x.plant) +
+          '<span class="trip-text"><b>' + h(x.plant.name || '(名前なし)') + '</b><small>' + h(text) + '</small></span></button></li>';
+      };
+      var section = function (cls, title, list, textFn, extra) {
+        if (!list.length) return '';
+        return '<section class="panel trip ' + cls + '"><h2>' + title + '（' + list.length + '株）</h2><ul class="trip-list">' +
+          list.map(function (x) { return row(x, textFn(x.plan)); }).join('') + '</ul>' + (extra || '') + '</section>';
+      };
+      html += '<p class="small" style="margin-top:16px">留守の期間：約' + (Math.round(days * 10) / 10) + '日（' + h(fmtDateTime(trip.leaveAt)) + ' 〜 ' + h(fmtDateTime(trip.returnAt)) + '）</p>';
+      html += section('warn', '⚠️ 出発直前に水やりしても、帰宅前に乾きそう', group('too-long'), function (pl) {
+        return '水やりから約' + (Math.round(pl.cycleDays * 10) / 10) + '日で乾く見込み。' + fmtDate(pl.emptyAt) + 'ごろに水やり時期（帰宅の約' + Math.max(1, Math.round(pl.shortDays)) + '日前）';
+      }, '<div class="note">出発の直前にたっぷり水やり（ソーキングなど）をして、直射日光や風の当たらない涼しい場所に移すと、乾くのがゆっくりになります。' +
+        '長く留守にするときは、家族や知人に水やりを頼むのも安心です。</div>');
+      html += section('water', '💧 出発の直前に水やりを', group('water-before'), function (pl) {
+        return '出発の日（' + fmtDate(trip.leaveAt) + '）に水やりすれば、帰宅のあと約' + (Math.round(pl.spareDays * 10) / 10) + '日は持つ見込み' +
+          (pl.spareDays < 1 ? '。ぎりぎりなので、できるだけ出発の直前に、たっぷりと' : '');
+      });
+      html += section('ok', '✓ 何もしなくて大丈夫', group('ok'), function (pl) {
+        return '次の水やり予定は ' + fmtDate(pl.dueAt) + '（帰宅のあと）';
+      });
+      html += section('unknown', '… 記録が足りず判定できない', group('unknown'), function () {
+        return '「水やり前」「水やり後」の記録がたまると判定できます';
+      });
+      html += '<p class="note">予定日は、これまでの記録（設定していれば天気も）からの見込みです。暑い日が続くなど、いつもより乾きやすいこともあるので、余裕をもって準備してください。</p>';
+    }
+    html += '</main>';
+    app.innerHTML = html;
+  }
+
   // ----- 一覧 -----
   function viewHome() {
     var items = judged();
@@ -407,6 +480,7 @@
         '<div class="water"><b>' + count.water + '</b>水やり時期</div>' +
         '<div class="soon"><b>' + count.soon + '</b>もうすぐ</div>' +
         '<div class="ok"><b>' + count.ok + '</b>まだ大丈夫</div></div>';
+      html += tripBanner(items);
       items.forEach(function (it) {
         var p = it.plant, j = it.judge;
         var meta = [];
@@ -422,6 +496,7 @@
           '<button class="card-weigh" data-go="weigh/' + h(encodeURIComponent(p.id)) + '" aria-label="' + h(p.name) + 'を計量">' + ICONS.scale + '計量</button>' +
           '</div>';
       });
+      if (!activeTrip()) html += '<button class="btn ghost block" data-go="trip">🧳 留守のときの水やり計画</button>';
     }
     html += '</main><div class="bottombar"><div class="bottombar-inner">' +
       (items.length ? '<button class="btn primary grow" data-go="weigh/' + h(encodeURIComponent(items[0].plant.id)) + '">' + ICONS.scale + '計量する</button>' : '') +
@@ -1363,6 +1438,17 @@
         config.place = null; saveConfig(); evalCache = {}; toast('天気を使わない設定にしました'); render();
         break;
       case 'album-compare': openCompare(r.id); break;
+      case 'trip-save': {
+        var leave = fromLocalInput($('#t-leave').value), ret = fromLocalInput($('#t-return').value);
+        if (!(ret > leave)) { toast('帰宅は出発よりあとの日時にしてください'); break; }
+        if (ret < Date.now()) { toast('帰宅の日時が過ぎています'); break; }
+        config.trip = { leaveAt: leave, returnAt: ret };
+        saveConfig(); viewTrip(); toast('留守の予定を保存しました');
+        break;
+      }
+      case 'trip-clear':
+        config.trip = null; saveConfig(); toast('留守の予定を消しました'); viewTrip();
+        break;
       case 'force-update':
         if (state.outbox.length && !confirm('未送信の記録が ' + state.outbox.length + '件あります。端末には残るので、そのまま更新して大丈夫です。更新しますか？')) break;
         toast('最新版を読み込んでいます…');

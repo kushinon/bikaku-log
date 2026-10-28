@@ -149,3 +149,45 @@ test('予測の精度：サイクルがなければ cycles は 0', () => {
   assert.equal(ev.cycles, 0);
   assert.equal(ev.plain, null);
 });
+
+// ---------- 留守のときの水やり計画 ----------
+
+// 4日ごとに水やりしている株（水やり後1000g → 水やり前600g、1日100gずつ減る）
+function tripLogs(lastDay, lastWeight) {
+  const logs = [];
+  for (let c = 0; c < 3; c++) {
+    logs.push(log(c * 4, 1000, 'after'), log(c * 4 + 1, 900), log(c * 4 + 2, 800), log(c * 4 + 3, 700), log(c * 4 + 4 - 0.01, 600, 'before'));
+  }
+  logs.push(log(12, 1000, 'after'));
+  if (lastDay) logs.push(log(lastDay, lastWeight));
+  return logs;
+}
+
+test('留守の計画：帰宅後に水やり時期が来る株は「何もしなくてよい」', () => {
+  const logs = tripLogs(12.5, 950);
+  const now = T0 + 12.6 * DAY;
+  const r = S.planAbsence(plant(), logs, now + 0.5 * DAY, now + 1.5 * DAY, { now });
+  assert.equal(r.kind, 'ok');
+});
+
+test('留守の計画：留守中に水やり時期が来るが、出発直前の水やりで持つ株', () => {
+  const logs = tripLogs(13, 900);
+  const now = T0 + 13.1 * DAY;
+  const r = S.planAbsence(plant(), logs, now + 1 * DAY, now + 4 * DAY, { now });
+  assert.equal(r.kind, 'water-before');
+  assert.ok(Math.abs(r.cycleDays - 4) < 0.1, `cycle ${r.cycleDays}`);
+  assert.ok(r.spareDays > 0.8 && r.spareDays < 1.2);
+});
+
+test('留守の計画：留守が長すぎて、出発直前に水やりしても乾く株', () => {
+  const logs = tripLogs(13, 900);
+  const now = T0 + 13.1 * DAY;
+  const r = S.planAbsence(plant(), logs, now + 1 * DAY, now + 8 * DAY, { now });
+  assert.equal(r.kind, 'too-long');
+  assert.ok(r.shortDays > 2.8 && r.shortDays < 3.2);
+});
+
+test('留守の計画：目安重量がない株は「記録が足りない」', () => {
+  const r = S.planAbsence(plant(), [log(0, 900, 'after'), log(1, 850)], T0 + 2 * DAY, T0 + 5 * DAY, { now: T0 + 1.1 * DAY });
+  assert.equal(r.kind, 'unknown');
+});
