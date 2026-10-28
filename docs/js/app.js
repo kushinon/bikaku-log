@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.2.6';
+  var APP_VERSION = '1.2.7';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -157,7 +157,7 @@
 
   function post(body, timeoutMs) {
     var ctrl = window.AbortController ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs || 25000) : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs || 60000) : null;
     return fetch(config.url, {
       method: 'POST',
       // text/plain にすると、Apps Script でも余計な事前確認（CORS）なしで送れます
@@ -178,12 +178,30 @@
     }).finally(function () { if (timer) clearTimeout(timer); });
   }
 
+  /** ウェブアプリの URL を開いて、サーバーが動いているかだけを確かめる */
+  function checkServer() {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 20000) : null;
+    return fetch(config.url, { method: 'GET', signal: ctrl ? ctrl.signal : undefined })
+      .then(function (res) { return res.text(); })
+      .then(function (text) { return text.indexOf('ビカクログ') >= 0; })
+      .catch(function () { return false; })
+      .finally(function () { if (timer) clearTimeout(timer); });
+  }
+
+  var SYNC_ERRORS = {
+    offline: { badge: 'オフライン', detail: '電波がないため、つながったら自動で送ります。' },
+    timeout: { badge: '通信に時間がかかっています', detail: '電波が弱いか、サーバーの応答が遅いため送れませんでした。しばらくすると自動でもう一度送ります。' },
+    unreachable: { badge: 'サーバーに接続できません', detail: 'ウェブアプリの URL にアクセスできません。URL が正しいか、Apps Script のデプロイが有効か（「デプロイを管理」）、承認が切れていないかを確認してください。' },
+    'post-failed': { badge: 'サーバーで保存できません', detail: 'サーバーは動いていますが、記録を受け付けませんでした。Apps Script の「デプロイを管理」で、アクセスできるユーザーが「全員」になっているか、もう一度承認が必要になっていないかを確認してください。' }
+  };
+
   function pickBatch() {
     var batch = [], size = 0;
     for (var i = 0; i < state.outbox.length; i++) {
       var op = state.outbox[i];
       var s = JSON.stringify(op).length;
-      if (batch.length && (batch.length >= 100 || size + s > 2000000)) break;
+      if (batch.length && (batch.length >= 25 || size + s > 400000)) break;
       batch.push(op);
       size += s;
     }
@@ -237,8 +255,15 @@
       if (received && !isEditing()) render();
       return state.outbox.length ? 'more' : 'done';
     }).catch(function (err) {
-      syncError = err.name === 'AbortError' || err instanceof TypeError ? 'offline' : err.message;
-      return 'error';
+      if (err.name === 'AbortError') syncError = 'timeout';
+      else if (err instanceof TypeError) syncError = navigator.onLine === false ? 'offline' : 'unreachable';
+      else syncError = err.message;
+      if (syncError !== 'unreachable') return 'error';
+      // 電波はあるのに届かないとき：サーバーが動いているかを確かめて、原因を見分ける
+      return checkServer().then(function (alive) {
+        syncError = alive ? 'post-failed' : 'unreachable';
+        return 'error';
+      });
     }).then(function (result) {
       batch.forEach(function (op) { delete inflight[op.opId]; });
       syncing = false;
@@ -257,7 +282,8 @@
     if (!isConfigured()) return { cls: 'error', text: '未設定' };
     var n = state.outbox.length;
     if (syncing) return { cls: 'syncing', text: '同期中…' };
-    if (syncError === 'offline') return { cls: 'pending', text: n ? 'オフライン・未送信' + n + '件' : 'オフライン' };
+    if (syncError === 'offline' || syncError === 'timeout') return { cls: 'pending', text: SYNC_ERRORS[syncError].badge + (n ? '・未送信' + n + '件' : '') };
+    if (SYNC_ERRORS[syncError]) return { cls: 'error', text: SYNC_ERRORS[syncError].badge };
     if (syncError) return { cls: 'error', text: '同期エラー' };
     if (n) return { cls: 'pending', text: '未送信' + n + '件' };
     return { cls: 'ok', text: state.lastSyncAt ? '同期済み' : '未同期' };
@@ -757,8 +783,8 @@
     if (!isConfigured()) return '接続先が未設定です。';
     var parts = ['未送信：' + state.outbox.length + '件'];
     parts.push('最後の同期：' + (state.lastSyncAt ? fmtAgo(state.lastSyncAt) : 'まだ'));
-    if (syncError && syncError !== 'offline') parts.push('<span style="color:var(--water)">エラー：' + h(syncError) + '</span>');
-    if (syncError === 'offline') parts.push('電波がないため、つながったら自動で送ります');
+    if (SYNC_ERRORS[syncError]) parts.push('<span style="color:var(--water)">' + h(SYNC_ERRORS[syncError].badge) + '</span>：' + h(SYNC_ERRORS[syncError].detail));
+    else if (syncError) parts.push('<span style="color:var(--water)">エラー：' + h(syncError) + '</span>');
     return parts.join('<br>');
   }
 
@@ -956,7 +982,7 @@
         if (config.demo) { toast('サンプル表示中は同期しません'); break; }
         if (!isConfigured()) { go('settings'); break; }
         syncError = '';
-        sync().then(function () { toast(syncError && syncError !== 'offline' ? syncError : syncError === 'offline' ? '電波がありません。つながったら自動で送ります' : '同期しました'); });
+        sync().then(function () { toast(!syncError ? '同期しました' : SYNC_ERRORS[syncError] ? SYNC_ERRORS[syncError].badge : syncError); });
         break;
       case 'weigh-save': weighSave(); break;
       case 'target-save': {
