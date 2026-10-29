@@ -531,3 +531,10 @@ html[data-theme="pop"] .album-item { border: 2px solid var(--ink); }
   html[data-theme="pop"] .seg button.active, html[data-theme="pop"] .chip.active,
   html[data-theme="pop"] .kind.after { color: #0B1426; }
 }
+
+/* ---------- 水やり不足 ---------- */
+.card-alert.water { color: var(--drop); }
+.viewer.underwater h2 { font-size: 20px; margin: 4px 0 10px; }
+.viewer.underwater p { margin: 0 0 10px; }
+.panel.underwater-panel { background: color-mix(in srgb, var(--drop) 12%, var(--surface)); }
+.ref.remeasure { color: var(--drop); font-weight: 700; }

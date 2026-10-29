@@ -392,3 +392,40 @@ test('デザイン：はじめはビビッドで、設定からシンプルに�
   await page.click('[data-theme-name="pop"]');
   assert.equal(await page.getAttribute('html', 'data-theme'), 'pop');
 });
+
+test('水やり不足：水やり後がいつもより軽いと知らせ、「もう一度はかる」で記録を置き換える', async (t) => {
+  const day = 864e5, now = Date.now(), start = now - 21 * day;
+  const logs = [];
+  const add = (d, w, kind) => logs.push({ id: 'w' + logs.length, plantId: 'p', at: start + d * day, weight: w, kind, memo: '', updatedAt: 1, deleted: false });
+  [[380, 636], [370, 626], [340, 586], [360, 611]].forEach(([b, a], i) => { add(i * 5, b, 'before'); add(i * 5 + 0.01, a, 'after'); add(i * 5 + 2, a - 150, 'regular'); });
+  add(20.9, 370, 'before');
+  const state = { plants: { p: { id: 'p', name: 'リドレイ', variety: '', location: '', style: 'board', memo: '', photo: '', targetWeight: '', createdAt: 1, updatedAt: 1, deleted: false } }, logs: {}, outbox: [], since: 0, lastSyncAt: 0 };
+  logs.forEach(l => { state.logs[l.id] = l; });
+  const { ctx, page } = await openApp(web, { demo: true, state });
+  t.after(() => ctx.close());
+  await page.waitForSelector('.card');
+  await page.click('.card-weigh');
+  await page.click('[data-kind="after"]');
+  await typeWeight(page, '540');
+  await page.click('#w-save');
+  await page.waitForSelector('.viewer.underwater');
+  assert.match(await page.locator('.viewer.underwater').textContent(), /今回 540g（いつもの水やり後は約619g）。吸った水は、いつもは約254g → 今回は約170g/);
+  // もう一度はかる → 置き換え
+  await page.click('[data-u=again]');
+  await page.waitForSelector('.ref.remeasure');
+  await typeWeight(page, '612');
+  await page.click('#w-save');
+  await page.waitForSelector('.card');
+  const afters = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('bikaku.demo')).logs).filter(l => l.kind === 'after' && !l.deleted).map(l => l.weight));
+  assert.deepEqual(afters.sort(), [586, 611, 612, 626, 636]);   // 540 は 612 に置き換わった
+  assert.equal(await page.locator('.card-alert').count(), 0);
+  // 「このままでよい」を選ぶと、次の計量までカードに表示される
+  await page.click('.card-weigh');
+  await page.click('[data-kind="after"]');
+  await typeWeight(page, '500');
+  await page.click('#w-save');
+  await page.waitForSelector('.viewer.underwater');
+  await page.click('[data-u=ok]');
+  await page.waitForSelector('.card-alert.water');
+  assert.deepEqual(page.errors, []);
+});

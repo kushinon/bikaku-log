@@ -387,7 +387,9 @@ var BikakuShared = (function () {
     TRIP_MARGIN_DAYS: 0.5, // 留守の計画：帰宅の半日後までに水やり時期が来る株は、出発前に水やりする
     ANOMALY_FAST: 1.5,     // いつもの1.5倍以上の速さで減っていたら「乾くのが速い」
     ANOMALY_SLOW: 0.6,     // いつもの0.6倍以下なら「乾くのが遅い」
-    ANOMALY_MIN_CYCLES: 3  // 比べるのに必要な過去の水やりサイクル数
+    ANOMALY_MIN_CYCLES: 3, // 比べるのに必要な過去の水やりサイクル数
+    UNDERWATER_RATIO: 0.9, // 水やり後の重さが、いつもの水やり後の9割に届かなければ「水やり不足かも」
+    UNDERWATER_MIN: 3      // 比べるのに必要な、過去の「水やり後」の記録の数
   };
 
   var KINDS = {
@@ -811,6 +813,44 @@ var BikakuShared = (function () {
     };
   }
 
+  /**
+   * 水やり不足のチェック
+   * 「水やり後」の記録 afterLog を、それより前の「水やり後」の重さ（新しい5回の中央値）と比べる。
+   * 吸った水の量（水やり後 − 直前の計量）も参考に返す
+   * @return {null | {weight, usualAfter, ratio, absorbed, usualAbsorbed, logId}}
+   */
+  function checkWatering(plant, logs, afterLog) {
+    if (!afterLog || afterLog.kind !== 'after' || (afterLog.memo && RESET_RE.test(afterLog.memo))) return null;
+    var all = plantLogs(plant.id, logs).filter(function (l) { return l.id !== afterLog.id; });
+    var before = all.filter(function (l) { return l.at < afterLog.at; });
+    var resetIdx = -1;
+    before.forEach(function (l, i) { if (l.memo && RESET_RE.test(l.memo)) resetIdx = i; });
+    var past = resetIdx >= 0 ? before.slice(resetIdx) : before;
+
+    var afters = [], absorbed = [];
+    past.forEach(function (l, i) {
+      if (l.kind !== 'after') return;
+      afters.push(l.weight);
+      var prev = past[i - 1];
+      if (prev && prev.kind !== 'after' && l.at - prev.at < DAY) absorbed.push(l.weight - prev.weight);
+    });
+    if (afters.length < CONFIG.UNDERWATER_MIN) return null;
+    var usualAfter = median(afters.slice(-CONFIG.TARGET_SAMPLES));
+    var ratio = afterLog.weight / usualAfter;
+    if (ratio >= CONFIG.UNDERWATER_RATIO) return null;
+
+    var prevLog = past[past.length - 1];
+    var nowAbsorbed = prevLog && prevLog.kind !== 'after' && afterLog.at - prevLog.at < DAY ? afterLog.weight - prevLog.weight : null;
+    return {
+      logId: afterLog.id,
+      weight: afterLog.weight,
+      usualAfter: usualAfter,
+      ratio: ratio,
+      absorbed: nowAbsorbed,
+      usualAbsorbed: absorbed.length ? median(absorbed.slice(-CONFIG.TARGET_SAMPLES)) : null
+    };
+  }
+
   function finish(r) {
     r.statusLabel = STATUS[r.status].label;
     r.statusOrder = STATUS[r.status].order;
@@ -939,6 +979,7 @@ var BikakuShared = (function () {
     evaluatePlant: evaluatePlant,
     planAbsence: planAbsence,
     detectAnomaly: detectAnomaly,
+    checkWatering: checkWatering,
     dayKey: dayKey,
     sortByUrgency: sortByUrgency,
     plantLogs: plantLogs,

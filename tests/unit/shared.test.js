@@ -247,3 +247,50 @@ test('乾き方：過去のサイクルが3回に満たないと判定しない'
   const logs = [log(0, 1000, 'after'), log(1, 850), log(2, 770), log(4, 610, 'before'), log(4.01, 1000, 'after'), log(5, 850), log(6, 700), log(7, 550)];
   assert.equal(S.detectAnomaly(plant(), logs), null);
 });
+
+// ---------- 水やり不足 ----------
+
+// 水やり前 → 水やり後 を4回（水やり後は約614g、吸う水は約250g）
+function wateringLogs() {
+  const logs = [];
+  [[380, 636], [370, 626], [340, 586], [360, 611]].forEach(([b, a], i) => {
+    logs.push(log(i * 5, b, 'before'), log(i * 5 + 0.01, a, 'after'), log(i * 5 + 2, a - 150));
+  });
+  return logs;
+}
+
+test('水やり不足：水やり後がいつもの9割に届かないと知らせる', () => {
+  const logs = wateringLogs();
+  logs.push(log(20, 370, 'before'));
+  const after = log(20.01, 540, 'after');
+  logs.push(after);
+  const c = S.checkWatering(plant(), logs, after);
+  assert.ok(c, '知らせる');
+  assert.equal(c.usualAfter, 618.5);           // 636, 626, 586, 611 の中央値
+  assert.equal(c.absorbed, 170);
+  assert.ok(Math.abs(c.usualAbsorbed - 253.5) < 0.01);
+});
+
+test('水やり不足：ふだんのばらつき（9割以上）なら知らせない', () => {
+  const logs = wateringLogs();
+  const after = log(20.01, 586, 'after');
+  logs.push(log(20, 360, 'before'), after);
+  assert.equal(S.checkWatering(plant(), logs, after), null);
+});
+
+test('水やり不足：過去の「水やり後」が3回未満なら判定しない', () => {
+  const logs = wateringLogs().slice(0, 6);   // 2回分
+  const after = log(20.01, 400, 'after');
+  logs.push(after);
+  assert.equal(S.checkWatering(plant(), logs, after), null);
+});
+
+test('水やり不足：仕立て直しの記録や、仕立て直しより前の記録とは比べない', () => {
+  const logs = wateringLogs();
+  const remount = log(20.01, 500, 'after', '仕立て直し');
+  logs.push(remount);
+  assert.equal(S.checkWatering(plant(), logs, remount), null);
+  const next = log(25.01, 300, 'after');
+  logs.push(log(25, 200, 'before'), next);
+  assert.equal(S.checkWatering(plant(), logs, next), null);   // 仕立て直し後の「水やり後」はまだ1回
+});

@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.6.1';
+  var APP_VERSION = '1.7.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -196,6 +196,9 @@
     var j = S.judgePlant(p, logs, now, useWeather ? { weather: weather } : {});
     j.accuracy = ev;
     j.weatherAvailable = !!weather;
+    var mine = S.plantLogs(p.id, logs);
+    var last = mine[mine.length - 1];
+    j.underwater = last && last.kind === 'after' ? S.checkWatering(p, logs, last) : null;
     var an = S.detectAnomaly(p, logs, { weather: weather });
     var dismissed = config.dismissed || {};
     j.anomaly = an && dismissed[p.id] !== an.wateredAt ? an : null;
@@ -521,6 +524,7 @@
           '<div>' + badgeHTML(j) + '</div>' +
           '<div class="card-meta">' + h(meta.join('')) + '</div>' +
           (when ? '<div class="card-meta">' + h(when) + '</div>' : '') +
+          (j.underwater ? '<div class="card-alert water">💧 水やり不足かも</div>' : '') +
           (j.anomaly ? '<div class="card-alert">⚠ 乾くのがいつもより' + (j.anomaly.type === 'fast' ? '速い' : '遅い') + '</div>' : '') +
           '</div></button>' +
           '<button class="card-weigh" data-go="weigh/' + h(encodeURIComponent(p.id)) + '" aria-label="' + h(p.name) + 'を計量">' + ICONS.scale + '計量</button>' +
@@ -561,6 +565,7 @@
         return '<button class="chip ' + (it.plant.id === ws.plantId ? 'active' : '') + '" data-weigh-plant="' + h(it.plant.id) + '">' +
           '<span class="dot ' + it.judge.status + '"></span>' + h(it.plant.name || '(名前なし)') + '</button>';
       }).join('') + '</div>' +
+      (ws.replaceId ? '<div class="ref remeasure">💧 さっきの「水やり後」の重さをはかり直しています</div>' : '') +
       '<div class="ref">' + h(ref.join(' ・ ')) + '</div>' +
       '<div class="display" id="w-display"></div>' +
       '<div class="diff" id="w-diff"></div>' +
@@ -622,13 +627,23 @@
     var ws = weighState;
     var v = parseFloat(ws.value);
     if (!(isFinite(v) && v > 0)) return;
-    var rec = {
-      id: uuid(), plantId: ws.plantId, at: ws.at || Date.now(), weight: Math.round(v * 10) / 10,
-      kind: ws.kind, memo: ws.reset && !S.RESET_RE.test(ws.memo || '') ? ['仕立て直し', ws.memo].filter(Boolean).join('・') : (ws.memo || ''), deleted: false
-    };
+    var memo = ws.reset && !S.RESET_RE.test(ws.memo || '') ? ['仕立て直し', ws.memo].filter(Boolean).join('・') : (ws.memo || '');
+    var old = ws.replaceId && state.logs[ws.replaceId];
+    // 「もう一度はかる」のときは、さっきの記録を新しい重さで置き換える
+    var rec = old
+      ? Object.assign({}, old, { at: Date.now(), weight: Math.round(v * 10) / 10, kind: ws.kind, memo: memo || old.memo })
+      : { id: uuid(), plantId: ws.plantId, at: ws.at || Date.now(), weight: Math.round(v * 10) / 10, kind: ws.kind, memo: memo, deleted: false };
+    var before = old ? Object.assign({}, old) : null;
     put('logs', rec);
-    var undo = function () { put('logs', Object.assign({}, rec, { deleted: true })); refreshAfterUndo(); };
+    var undo = function () {
+      put('logs', before ? Object.assign({}, before, { updatedAt: rec.updatedAt }) : Object.assign({}, rec, { deleted: true }));
+      refreshAfterUndo();
+    };
     var plant = state.plants[ws.plantId];
+    if (ws.kind === 'after' && plant) {
+      var check = S.checkWatering(plant, logsList(), rec);
+      if (check) { weighState = null; showUnderwater(plant, check, true); return; }
+    }
     if (ws.kind === 'before') {
       // 水やり前のあとは、続けて水やり後を記録しやすくする
       weighState = { plantId: ws.plantId, value: '', kind: 'after', at: null, memo: '' };
@@ -639,6 +654,38 @@
       toast((plant ? plant.name + '：' : '') + fmtWeight(v) + ' を保存しました', undo);
       history.length > 1 ? history.back() : go('');
     }
+  }
+
+  /** 水やり不足のお知らせの文 */
+  function underwaterText(c) {
+    var t = '今回 ' + fmtWeight(c.weight) + '（いつもの水やり後は約' + fmtWeight(Math.round(c.usualAfter)) + '）';
+    if (c.absorbed !== null && c.usualAbsorbed !== null) {
+      t += '。吸った水は、いつもは約' + fmtWeight(Math.round(c.usualAbsorbed)) + ' → 今回は約' + fmtWeight(Math.round(c.absorbed));
+    }
+    return t;
+  }
+
+  /** 「水やり後」を保存した直後の、水やり不足のお知らせ */
+  function showUnderwater(plant, c) {
+    var o = showOverlay('<div class="viewer underwater">' +
+      '<h2>💧 いつもより水が入っていないようです</h2>' +
+      '<p><b>' + h(plant.name) + '</b>：' + h(underwaterText(c)) + '</p>' +
+      '<p class="small">水苔が乾ききって水をはじいていることがあります。バケツなどに数分つける（ソーキング）など、もう一度たっぷり水やりしてから、はかり直してみてください。</p>' +
+      '<div class="stack"><button class="btn primary block" data-u="again">💧 もう一度はかる</button>' +
+      '<button class="btn block" data-u="ok">このままでよい</button></div></div>');
+    o.querySelector('[data-u=again]').addEventListener('click', function () { closeOverlay(); remeasure(plant.id, c.logId); });
+    o.querySelector('[data-u=ok]').addEventListener('click', function () {
+      closeOverlay();
+      toast(plant.name + '：' + fmtWeight(c.weight) + ' を保存しました');
+      if (currentRoute().name === 'weigh') { history.length > 1 ? history.back() : go(''); } else render();
+    });
+  }
+
+  /** 水やりし直したあとに、さっきの「水やり後」の記録をはかり直す */
+  function remeasure(plantId, logId) {
+    weighState = { plantId: plantId, value: '', kind: 'after', at: null, memo: '', replaceId: logId };
+    if (currentRoute().name === 'weigh' && currentRoute().id === plantId) viewWeigh(plantId);
+    else go('weigh/' + encodeURIComponent(plantId));
   }
 
   // ----- 株の詳細 -----
@@ -661,6 +708,11 @@
       '<button class="btn" data-go="edit/' + h(encodeURIComponent(p.id)) + '">編集</button></div>';
 
     html += anomalyPanel(p, j);
+    if (j.underwater) {
+      html += '<section class="panel anomaly underwater-panel"><h2>💧 水やり不足かもしれません</h2><p>' + h(underwaterText(j.underwater)) + '</p>' +
+        '<p class="small">もう一度たっぷり水やり（ソーキングなど）をしてから、はかり直してみてください。</p>' +
+        '<button class="btn small primary" data-action="remeasure" data-id="' + h(j.underwater.logId) + '">💧 はかり直す</button></section>';
+    }
     html += '<section class="panel"><div class="status-big">' + badgeHTML(j) +
       '<span class="when">' + h(daysText(j)) + '</span></div><dl class="kv">' +
       '<dt>最新の重さ</dt><dd>' + (j.latest ? fmtWeight(j.latest.weight) + ' <small class="small">' + h(fmtDateTime(j.latest.at)) + '</small>' : '—') + '</dd>' +
@@ -1512,6 +1564,7 @@
         config.place = null; saveConfig(); evalCache = {}; toast('天気を使わない設定にしました'); render();
         break;
       case 'album-compare': openCompare(r.id); break;
+      case 'remeasure': remeasure(r.id, el.getAttribute('data-id')); break;
       case 'theme':
         config.theme = el.getAttribute('data-theme-name');
         saveConfig(); applyTheme(); viewSettings();
