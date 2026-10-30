@@ -85,3 +85,16 @@ test('読み取れない数字入りの行は「読み取れなかった行」�
   assert.equal(r.entries.length, 1);
   assert.deepEqual(r.skipped, ['鉢を3号に変えた']);
 });
+
+test('時刻のない今日の記録は、12時前なら今の時刻にする（未来の記録を作らない）', () => {
+  const morning = new Date(2026, 9, 30, 9, 15).getTime();
+  const r = I.parse('10/30 640g', morning);
+  assert.equal(fmt(r.entries[0].at), '2026/10/30 9:15');
+});
+
+test('未来の日時の行は取り込まない', () => {
+  const morning = new Date(2026, 9, 30, 9, 0).getTime();
+  const r = I.parse('10/30 08:00 640g\n10/30 21:00 600g', morning);
+  assert.equal(r.entries.length, 1);
+  assert.match(r.skipped[0], /未来の日時/);
+});

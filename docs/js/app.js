@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.7.1';
+  var APP_VERSION = '1.7.2';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -588,7 +588,10 @@
     app.innerHTML = html;
     var chip = $('.chip.active');
     if (chip && chip.scrollIntoView) chip.scrollIntoView({ inline: 'center', block: 'nearest' });
-    $('#w-at').addEventListener('change', function (e) { ws.at = fromLocalInput(e.target.value); });
+    $('#w-at').addEventListener('change', function (e) {
+      ws.at = fromLocalInput(e.target.value);
+      if (ws.at > Date.now()) { ws.at = null; e.target.value = toLocalInput(Date.now()); toast('未来の日時にはできません。今の日時にしました'); }
+    });
     $('#w-memo').addEventListener('input', function (e) { ws.memo = e.target.value; });
     $('#w-reset').addEventListener('change', function (e) { ws.reset = e.target.checked; });
     updateWeighDisplay(j);
@@ -723,6 +726,7 @@
       '<dt>前回の水やり</dt><dd>' + (j.lastWateredAt ? h(fmtDateTime(j.lastWateredAt)) : '—') + '</dd>' +
       predictionRows(j) +
       '</dl>' + (j.note ? '<div class="note">' + h(j.note) + '</div>' : '') + predictionNote(j) +
+      (j.futureCount ? '<div class="note" style="color:var(--water)">未来の日時になっている記録が ' + j.futureCount + '件あるため、判定に使っていません。下の「記録」の一覧でタップして、日時を直してください。</div>' : '') +
       (j.resetAt ? '<div class="note">' + h(fmtDate(j.resetAt)) + ' の仕立て直し・植え替えより前の記録は、判定に使っていません。</div>' : '') +
       '<div class="target-edit"><input class="input" id="target-input" inputmode="decimal" placeholder="目安重量を手動で設定（g）" value="' + h(p.targetWeight === null || p.targetWeight === undefined ? '' : p.targetWeight) + '">' +
       '<button class="btn small primary" data-action="target-save">設定</button>' +
@@ -1259,7 +1263,9 @@
       var w = parseFloat($('#l-weight').value);
       if (!(w > 0)) { toast('重さを数字で入れてください'); return; }
       var before = Object.assign({}, l);
-      var rec = Object.assign({}, l, { weight: Math.round(w * 10) / 10, kind: kind, at: fromLocalInput($('#l-at').value), memo: $('#l-memo').value });
+      var at = fromLocalInput($('#l-at').value);
+      if (at > Date.now() + 10 * 60 * 1000) { toast('未来の日時にはできません'); return; }
+      var rec = Object.assign({}, l, { weight: Math.round(w * 10) / 10, kind: kind, at: at, memo: $('#l-memo').value });
       put('logs', rec);
       toast('修正しました', function () { put('logs', Object.assign({}, before, { updatedAt: rec.updatedAt })); refreshAfterUndo(); });
       history.back();

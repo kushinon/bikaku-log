@@ -13,7 +13,8 @@ var BikakuImporter = (function () {
 
   var HOUR = 60 * 60 * 1000;
   var BEFORE_WINDOW = 6 * HOUR;   // 水やり後の直前、この時間以内の軽い記録は「水やり前」とみなす
-  var JUMP_RATIO = 1.1;           // 前の記録より1割以上重くなっていたら、水やりしたとみなす
+  var JUMP_RATIO = 1.1;
+  var FUTURE_GRACE = 10 * 60 * 1000;   // これより先の未来の日時は取り込まない           // 前の記録より1割以上重くなっていたら、水やりしたとみなす
 
   /** 全角の数字・記号を半角にそろえる */
   function normalize(s) {
@@ -60,7 +61,10 @@ var BikakuImporter = (function () {
       lastMonth = month;
       var h = m[4] !== undefined ? Number(m[4]) : 12;
       var min = m[5] !== undefined ? Number(m[5]) : 0;
-      return new Date(y, month - 1, day, h, min).getTime();
+      var t = new Date(y, month - 1, day, h, min).getTime();
+      // 時刻が書いていない今日の記録は、12時がまだ来ていなければ今の時刻にする
+      if (m[4] === undefined && t > now) t = Math.floor(now / 60000) * 60000;
+      return t;
     }
 
     lines.forEach(function (raw) {
@@ -82,6 +86,7 @@ var BikakuImporter = (function () {
         at = pendingDate;
       }
       pendingDate = null;
+      if (at > now + FUTURE_GRACE) { skipped.push(raw.trim() + '（未来の日時のため取り込みません）'); return; }
 
       var memoMatch = rest.slice(wm.index + wm[0].length).match(/\(([^)]*)\)/);
       var memo = memoMatch ? memoMatch[1].trim() : rest.slice(wm.index + wm[0].length).replace(/^[\s:、,]+/, '').trim();

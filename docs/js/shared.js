@@ -28,7 +28,8 @@ var BikakuShared = (function () {
     ANOMALY_MIN_CYCLES: 3, // 比べるのに必要な過去の水やりサイクル数
     UNDERWATER_RATIO: 0.9, // 水やり後の重さが、いつもの水やり後の9割に届かなければ「水やり不足かも」
     UNDERWATER_MIN: 3,     // 比べるのに必要な、過去の「水やり後」の記録の数
-    WATERING_HOURS: 12     // 「水やり前」からこの時間までは「水やり中」（ソーキングなどで時間がかかるため）
+    WATERING_HOURS: 12,    // 「水やり前」からこの時間までは「水やり中」（ソーキングなどで時間がかかるため）
+    FUTURE_GRACE_MIN: 10   // これより先の未来の日時の記録は、判定に使わない（端末の時計のずれは許す）
   };
 
   var KINDS = {
@@ -183,7 +184,9 @@ var BikakuShared = (function () {
   function judgePlant(plant, logs, now, opts) {
     now = now || Date.now();
     opts = opts || {};
-    var all = plantLogs(plant.id, logs);
+    // 未来の日時の記録があると「最新」がずれてしまうので、判定には使わない
+    var withFuture = plantLogs(plant.id, logs);
+    var all = withFuture.filter(function (l) { return l.at <= now + CONFIG.FUTURE_GRACE_MIN * 60 * 1000; });
     var resetIdx = -1;
     all.forEach(function (l, i) { if (l.memo && RESET_RE.test(l.memo)) resetIdx = i; });
     var sorted = resetIdx > 0 ? all.slice(resetIdx) : all;
@@ -202,6 +205,7 @@ var BikakuShared = (function () {
       daysLeft: null,
       lastWateredAt: null,
       resetAt: resetIdx > 0 ? all[resetIdx].at : null,
+      futureCount: withFuture.length - all.length,
       weatherApplied: false,
       plainPredictedAt: null,
       note: ''

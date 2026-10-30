@@ -303,3 +303,12 @@ test('水やり不足：仕立て直しの記録や、仕立て直しより前�
   logs.push(log(25, 200, 'before'), next);
   assert.equal(S.checkWatering(plant(), logs, next), null);   // 仕立て直し後の「水やり後」はまだ1回
 });
+
+test('未来の日時の記録は判定に使わない（さっきの「水やり前」が最新として扱われる）', () => {
+  const logs = [log(0, 600, 'before'), log(0.01, 1000, 'after'), log(1, 900), log(2, 800),
+    log(3, 640, 'before'), log(3.2, 700)];       // 3.2日目（未来）に「ふだん」の記録がある
+  const j = S.judgePlant(plant(), logs, T0 + 3.05 * DAY);
+  assert.equal(j.status, 'watering');
+  assert.equal(j.futureCount, 1);
+  assert.equal(j.latest.weight, 640);
+});
