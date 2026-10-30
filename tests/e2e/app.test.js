@@ -451,3 +451,17 @@ test('水やり中：「水やり前」を保存して時間がたっても、�
   await page.locator('.card', { hasText: 'ネザーランド' }).locator('.card-weigh').click();
   assert.equal(await page.locator('[data-kind].active').getAttribute('data-kind'), 'after');
 });
+
+test('成長アルバム：一覧の写真がない株は、アルバムの最新の写真が一覧にも出る', async (t) => {
+  const { ctx, page } = await openApp(web, { demo: true });
+  t.after(() => ctx.close());
+  await addPlant(page, '写真なしの株');
+  await page.waitForSelector('#album .actions');
+  assert.equal(await page.locator('.hero img').count(), 0);
+  await page.setInputFiles('#album-input', [PHOTO1]);
+  await page.waitForSelector('.hero img');              // 詳細画面の上にも写真が出る
+  await page.goto(web.url + '#/');
+  await page.waitForSelector('.card');
+  assert.equal(await page.locator('.card', { hasText: '写真なしの株' }).locator('img.thumb').count(), 1);
+  assert.deepEqual(page.errors, []);
+});

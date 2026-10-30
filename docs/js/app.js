@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.7.2';
+  var APP_VERSION = '1.7.3';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -1016,6 +1016,7 @@
       var box = $('#album');
       if (!box || currentRoute().name !== 'plant' || currentRoute().id !== plantId) return;
       var list = withPending(plantId, a.list);
+      if (useAlbumCover(plantId, list)) { render(); return; }
       var html = '';
       if (albumNeedsServer || (!config.demo && isConfigured() && !serverSupportsPhotos() && state.lastSyncAt)) {
         html += '<div class="msg err" style="margin:0 0 10px">アルバムの写真をスプレッドシートに保存するには、サーバーのコードの更新が必要です（説明書の「サーバー用のコードが更新されたとき」）。それまで写真はこの端末に保存され、更新後に自動で送られます。</div>';
@@ -1036,6 +1037,16 @@
         b.addEventListener('click', function () { openViewer(plantId, b.getAttribute('data-photo')); });
       });
     });
+  }
+
+  /** 一覧の写真がまだない株は、アルバムのいちばん新しい写真を一覧の写真にする */
+  function useAlbumCover(plantId, list) {
+    var p = state.plants[plantId];
+    if (!p || safePhoto(p.photo) || !list.length) return false;
+    var newest = list[list.length - 1];
+    if (!safePhoto(newest.photo) || newest.photo.length > PHOTO_MAX_CHARS) return false;
+    put('plants', Object.assign({}, p, { photo: newest.photo }));
+    return true;
   }
 
   function addAlbumPhotos(plantId, files) {
