@@ -429,3 +429,25 @@ test('水やり不足：水やり後がいつもより軽いと知らせ、「�
   await page.waitForSelector('.card-alert.water');
   assert.deepEqual(page.errors, []);
 });
+
+test('水やり中：「水やり前」を保存して時間がたっても、「水やり後」を入れるまで「水やり中」と出す', async (t) => {
+  const { ctx, page } = await openApp(web, { demo: true, time: new Date() });
+  t.after(() => ctx.close());
+  await page.waitForSelector('.card');
+  await page.locator('.card-weigh').first().click();
+  await page.click('[data-kind="before"]');
+  await typeWeight(page, '600');
+  await page.click('#w-save');
+  await page.click('[data-action=back]');
+  await page.waitForSelector('.card');
+  const card = () => page.locator('.card', { hasText: 'ネザーランド' }).textContent();
+  assert.match(await card(), /水やり中/);
+  await page.clock.fastForward('02:00:00');     // ソーキングで2時間かかった
+  await page.reload();
+  await page.waitForSelector('.card');
+  assert.match(await card(), /水やり中.*「水やり後」を記録してください/);
+  assert.doesNotMatch(await card(), /まだ大丈夫/);
+  // 計量画面を開くと「水やり後」が選ばれている
+  await page.locator('.card', { hasText: 'ネザーランド' }).locator('.card-weigh').click();
+  assert.equal(await page.locator('[data-kind].active').getAttribute('data-kind'), 'after');
+});

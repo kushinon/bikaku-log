@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.7.0';
+  var APP_VERSION = '1.7.1';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -58,6 +58,7 @@
   }
 
   function daysText(j) {
+    if (j.status === 'watering') return '水やりが終わったら「水やり後」を記録してください';
     if (j.predictedAt === null) return '';
     var cd = calendarDays(j.predictedAt);
     var date = fmtDate(j.predictedAt);
@@ -76,7 +77,7 @@
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
     camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg>'
   };
-  var STATUS_ICON = { water: '💧', soon: '⏳', ok: '✓', unknown: '…' };
+  var STATUS_ICON = { water: '💧', watering: '🚿', soon: '⏳', ok: '✓', unknown: '…' };
 
   /**
    * 画面の下に短いお知らせを出す
@@ -550,7 +551,7 @@
       var sorted = S.plantLogs(current.plant.id, logsList());
       var last = sorted[sorted.length - 1];
       var kind = 'regular';
-      if (last && last.kind === 'before' && Date.now() - last.at < 3 * 3600 * 1000) kind = 'after';
+      if (last && last.kind === 'before' && Date.now() - last.at < S.CONFIG.WATERING_HOURS * 3600 * 1000) kind = 'after';
       else if (current.judge.status === 'water') kind = 'before';
       weighState = { plantId: current.plant.id, value: '', kind: kind, at: null, memo: '' };
     }

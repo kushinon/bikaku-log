@@ -27,7 +27,8 @@ var BikakuShared = (function () {
     ANOMALY_SLOW: 0.6,     // いつもの0.6倍以下なら「乾くのが遅い」
     ANOMALY_MIN_CYCLES: 3, // 比べるのに必要な過去の水やりサイクル数
     UNDERWATER_RATIO: 0.9, // 水やり後の重さが、いつもの水やり後の9割に届かなければ「水やり不足かも」
-    UNDERWATER_MIN: 3      // 比べるのに必要な、過去の「水やり後」の記録の数
+    UNDERWATER_MIN: 3,     // 比べるのに必要な、過去の「水やり後」の記録の数
+    WATERING_HOURS: 12     // 「水やり前」からこの時間までは「水やり中」（ソーキングなどで時間がかかるため）
   };
 
   var KINDS = {
@@ -44,9 +45,10 @@ var BikakuShared = (function () {
 
   var STATUS = {
     water: { label: '水やり時期', order: 0 },
-    soon: { label: 'もうすぐ', order: 1 },
-    ok: { label: 'まだ大丈夫', order: 2 },
-    unknown: { label: '記録が足りません', order: 3 }
+    watering: { label: '水やり中', order: 1 },
+    soon: { label: 'もうすぐ', order: 2 },
+    ok: { label: 'まだ大丈夫', order: 3 },
+    unknown: { label: '記録が足りません', order: 4 }
   };
 
   // メモにこの言葉がある記録より前は、判定に使わない（株の重さが大きく変わるため）
@@ -218,10 +220,10 @@ var BikakuShared = (function () {
     if (lastAfterIdx >= 0) r.lastWateredAt = sorted[lastAfterIdx].at;
     var segment = lastAfterIdx >= 0 ? sorted.slice(lastAfterIdx) : sorted.slice();
 
-    // 最後が「水やり前」で1時間以上たっている＝水やり後の記録を忘れた可能性。
-    // 過去の「水やり後」の重さを使って水やりしたものとみなす
+    // 最後が「水やり前」のまま12時間以上たっている＝水やり後の記録を忘れた可能性。
+    // 過去の「水やり後」の重さを使って水やりしたものとみなす（12時間までは「水やり中」）
     var current = r.latest;
-    if (current.kind === 'before' && now - current.at > HOUR) {
+    if (current.kind === 'before' && now - current.at > CONFIG.WATERING_HOURS * HOUR) {
       var afters = sorted.filter(function (l) { return l.kind === 'after'; })
         .slice(-CONFIG.TARGET_SAMPLES).map(function (l) { return l.weight; });
       var afterWeight = median(afters);
@@ -259,7 +261,10 @@ var BikakuShared = (function () {
       return finish(r);
     }
 
-    if (current.kind === 'before' && !current.virtual) {
+    if (current.kind === 'before' && !current.virtual && now - current.at <= CONFIG.WATERING_HOURS * HOUR) {
+      r.status = 'watering';
+      r.note = '水やりが終わったら「水やり後」の重さを記録してください';
+    } else if (current.kind === 'before' && !current.virtual) {
       r.status = 'water';
       r.predictedAt = current.at;
     } else if (current.weight <= target) {

@@ -54,9 +54,18 @@ test('記録が少ないときは過去のサイクルの平均の減り方を�
   assert.ok(Math.abs(j.ratePerDay - 100) < 0.5);
 });
 
-test('最後が「水やり前」のまま時間がたつと、水やりしたものとみなす', () => {
+test('「水やり前」を記録してから12時間までは「水やり中」（ソーキングで時間がかかっても「まだ大丈夫」にしない）', () => {
   const logs = [log(0, 1000, 'after'), log(2, 800), log(4, 600, 'before'), log(4.01, 1000, 'after'), log(8, 600, 'before')];
-  const j = S.judgePlant(plant(), logs, T0 + 8.5 * DAY);
+  for (const hours of [0.1, 2, 11.9]) {
+    const j = S.judgePlant(plant(), logs, T0 + 8 * DAY + hours * 3600e3);
+    assert.equal(j.status, 'watering', `${hours}時間後`);
+    assert.equal(j.statusLabel, '水やり中');
+  }
+});
+
+test('最後が「水やり前」のまま12時間以上たつと、水やりしたものとみなす', () => {
+  const logs = [log(0, 1000, 'after'), log(2, 800), log(4, 600, 'before'), log(4.01, 1000, 'after'), log(8, 600, 'before')];
+  const j = S.judgePlant(plant(), logs, T0 + 8.6 * DAY);
   assert.notEqual(j.status, 'water');
   assert.match(j.note, /推定/);
 });
@@ -77,8 +86,8 @@ test('記録がない株は「記録が足りません」', () => {
 });
 
 test('状態の重要度順に並べる', () => {
-  const items = ['ok', 'water', 'unknown', 'soon'].map((s, i) => ({ plant: { name: 'p' + i }, judge: { statusOrder: S.STATUS[s].order, predictedAt: null } }));
-  assert.deepEqual(S.sortByUrgency(items).map(x => x.plant.name), ['p1', 'p3', 'p0', 'p2']);
+  const items = ['ok', 'water', 'unknown', 'soon', 'watering'].map((s, i) => ({ plant: { name: 'p' + i }, judge: { statusOrder: S.STATUS[s].order, predictedAt: null } }));
+  assert.deepEqual(S.sortByUrgency(items).map(x => x.plant.name), ['p1', 'p4', 'p3', 'p0', 'p2']);
 });
 
 // ---------- 天気 ----------

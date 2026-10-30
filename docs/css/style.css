@@ -538,3 +538,10 @@ html[data-theme="pop"] .album-item { border: 2px solid var(--ink); }
 .viewer.underwater p { margin: 0 0 10px; }
 .panel.underwater-panel { background: color-mix(in srgb, var(--drop) 12%, var(--surface)); }
 .ref.remeasure { color: var(--drop); font-weight: 700; }
+
+/* ---------- 水やり中 ---------- */
+.card.watering { border-left-color: var(--drop); }
+.badge.watering { background: color-mix(in srgb, var(--drop) 16%, transparent); color: var(--drop); }
+.dot.watering { background: var(--drop); }
+html[data-theme="pop"] .card.watering { border-left-color: var(--blue); }
+html[data-theme="pop"] .badge.watering { background: var(--blue); color: #fff; }
