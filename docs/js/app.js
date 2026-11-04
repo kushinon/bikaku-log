@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.7.3';
+  var APP_VERSION = '1.8.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -1420,6 +1420,10 @@
       '<div id="s-msg"></div></section>' +
       '<section class="panel"><h2>記録の取り込み</h2><p class="small">Google Keep などのメモに書いた過去の計量記録を、まとめて取り込めます。</p>' +
       '<button class="btn block" data-go="import/">メモからまとめて取り込む</button></section>' +
+      '<section class="panel"><h2>データのバックアップ</h2>' +
+      '<p class="small">記録を CSV ファイル（Excel・Numbers・Google スプレッドシートで開けます）で保存します。iPhone では「ファイルに保存」を選んでください。</p>' +
+      '<div class="stack"><button class="btn block" data-action="backup-logs">📄 すべての記録を保存</button>' +
+      '<button class="btn block" data-action="backup-plants">🌿 株の一覧を保存</button></div></section>' +
       '<section class="panel"><h2>デザイン</h2><div class="seg" style="grid-template-columns:1fr 1fr">' +
       [['pop', 'ビビッド'], ['simple', 'シンプル']].map(function (t) {
         return '<button class="' + ((config.theme || 'pop') === t[0] ? 'active' : '') + '" data-action="theme" data-theme-name="' + t[0] + '">' + t[1] + '</button>';
@@ -1474,6 +1478,62 @@
       var text = err.name === 'AbortError' || err instanceof TypeError ? '接続できませんでした。URLと電波の状態を確認してください。' : err.message;
       msg.innerHTML = '<div class="msg err">' + h(text) + '</div>';
     });
+  }
+
+  // ---------------- バックアップ（CSV） ----------------
+
+  function csvCell(v) {
+    var t = v === null || v === undefined ? '' : String(v);
+    if (/^[=+\-@]/.test(t)) t = "'" + t;   // 表計算ソフトで数式として動かないように
+    return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  }
+  function csvText(rows) { return rows.map(function (r) { return r.map(csvCell).join(','); }).join('\r\n') + '\r\n'; }
+  function csvDate(ms) {
+    var d = new Date(ms);
+    return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /** すべての記録（株名・品種つき、日時の古い順） */
+  function logsCsv() {
+    var rows = [['株', '品種', '日時', '重さ(g)', '種別', 'メモ']];
+    logsList().filter(function (l) { return state.plants[l.plantId] && !state.plants[l.plantId].deleted; })
+      .sort(function (a, b) { return a.plantId === b.plantId ? a.at - b.at : String(state.plants[a.plantId].name).localeCompare(String(state.plants[b.plantId].name), 'ja'); })
+      .forEach(function (l) {
+        var p = state.plants[l.plantId];
+        rows.push([p.name, p.variety, csvDate(l.at), l.weight, S.KINDS[l.kind] || l.kind, l.memo]);
+      });
+    return csvText(rows);
+  }
+
+  /** 株の一覧（今の判定つき） */
+  function plantsCsv() {
+    var rows = [['株', '品種', '置き場所', '仕立て', '状態', '最新の重さ(g)', '目安重量(g)', '次の水やり予定', '記録の数', 'メモ']];
+    var logs = logsList();
+    judged().forEach(function (it) {
+      var p = it.plant, j = it.judge;
+      rows.push([p.name, p.variety, p.location, S.STYLES[p.style] || '', j.statusLabel, j.latest ? j.latest.weight : '',
+        j.target !== null ? j.target : '', j.predictedAt !== null ? csvDate(j.predictedAt) : '',
+        logs.filter(function (l) { return l.plantId === p.id; }).length, p.memo]);
+    });
+    return csvText(rows);
+  }
+
+  /** CSV をファイルとして保存する（iPhone は共有メニュー、パソコンはダウンロード） */
+  function saveCsv(base, text) {
+    var d = new Date();
+    var name = base + '_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '.csv';
+    var blob = new Blob(['\ufeff' + text], { type: 'text/csv;charset=utf-8' });   // 先頭の印で Excel でも文字化けしない
+    var file = window.File ? new File([blob], name, { type: 'text/csv' }) : null;
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: name }).catch(function () { /* 閉じたときは何もしない */ });
+      return;
+    }
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+    toast(name + ' を保存しました');
   }
 
   // ---------------- 操作の受け付け ----------------
@@ -1583,6 +1643,8 @@
         break;
       case 'album-compare': openCompare(r.id); break;
       case 'remeasure': remeasure(r.id, el.getAttribute('data-id')); break;
+      case 'backup-logs': saveCsv('ビカクログ_記録', logsCsv()); break;
+      case 'backup-plants': saveCsv('ビカクログ_株', plantsCsv()); break;
       case 'theme':
         config.theme = el.getAttribute('data-theme-name');
         saveConfig(); applyTheme(); viewSettings();

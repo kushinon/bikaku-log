@@ -465,3 +465,26 @@ test('成長アルバム：一覧の写真がない株は、アルバムの最�
   assert.equal(await page.locator('.card', { hasText: '写真なしの株' }).locator('img.thumb').count(), 1);
   assert.deepEqual(page.errors, []);
 });
+
+test('バックアップ：すべての記録と株の一覧を CSV で保存できる', async (t) => {
+  const { ctx, page } = await openApp(web, { demo: true, desktop: true });
+  t.after(() => ctx.close());
+  await page.waitForSelector('.card');
+  await page.goto(web.url + '#/settings');
+  const read = async (action) => {
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click(`[data-action=${action}]`)]);
+    // ファイル名（ビカクログ_記録_日付.csv）は、テスト用のブラウザでは「download」になることがある
+    assert.match(dl.suggestedFilename(), /^(ビカクログ_.+_\d{8}\.csv|download)$/);
+    return fs.readFileSync(await dl.path(), 'utf8');
+  };
+  const logs = await read('backup-logs');
+  assert.equal(logs.charCodeAt(0), 0xfeff);                      // Excel 用の印
+  const lines = logs.trim().split('\r\n');
+  assert.equal(lines[0], '株,品種,日時,重さ(g),種別,メモ');   // trim() で先頭の印は取れる
+  assert.ok(lines.length > 100);
+  assert.match(lines[1], /^ネザーランド,P\. bifurcatum ‘Netherlands’,\d{4}\/\d\d\/\d\d \d\d:\d\d,\d+,水やり後,/);
+  const plants = await read('backup-plants');
+  assert.equal(plants.trim().split('\r\n').length, 4);           // 見出し＋3株
+  assert.match(plants, /リドレイ,P\. ridleyi,浴室の近く,ハンギング,もうすぐ/);
+  assert.deepEqual(page.errors, []);
+});
