@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.8.0';
+  var APP_VERSION = '1.8.1';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -1148,6 +1148,15 @@
       }).join('') + '</div></div>');
   }
 
+  /** 品種の候補：これまでに登録した品種（オリジナル株など）を先頭に、決まった候補を続ける */
+  function varietyChoices(fixed) {
+    var seen = {}, out = [];
+    plantsList().map(function (p) { return String(p.variety || '').trim(); })
+      .concat(fixed)
+      .forEach(function (v) { if (v && !seen[v]) { seen[v] = true; out.push(v); } });
+    return out;
+  }
+
   // ----- 株の登録・編集 -----
   var editDraft = null;
 
@@ -1168,12 +1177,13 @@
       (d.photo ? '<button type="button" class="btn ghost small" data-action="photo-clear">写真を外す</button>' : '') + '</div>' +
       '<div class="field"><label for="f-name">名前（必須）</label><input class="input" id="f-name" name="name" required value="' + h(d.name) + '" placeholder="例：リビングのネザーランド"></div>' +
       '<div class="field"><label for="f-variety">品種</label><input class="input" id="f-variety" name="variety" value="' + h(d.variety) + '" placeholder="例：P. bifurcatum" list="variety-list">' +
-      '<datalist id="variety-list">' + [
+      '<datalist id="variety-list">' + varietyChoices([
         // お持ちの株
         'マセラティ（P. ‘Maserati’）', 'リドレイ（P. ridleyi）', 'リドレイ パカラン（P. ridleyi ‘Pakarang’）', 'ネザーランド（P. bifurcatum ‘Netherlands’）', 'グランデ（P. grande）', 'ワンダエ（P. wandae）', 'ピューチャン（P. pewchan）', '月光爪哇（P. willinckii ‘Gekkou Jawa’）', 'ジェイドガール（P. willinckii ‘Jade Girl’）',
         // 原種（18種・五十音順）
         'アルシコルネ（P. alcicorne）', 'アンディナム（P. andinum）', 'ウィリンキー（P. willinckii）', 'エリシー（P. ellisii）', 'エレファントティス（P. elephantotis）', 'クアドリディコトマム（P. quadridichotomum）', 'コロナリウム（P. coronarium）', 'スパーバム（P. superbum）', 'ステマリア（P. stemaria）', 'ビーチー（P. veitchii）', 'ヒリー（P. hillii）', 'ビフルカツム（P. bifurcatum）', 'ホルタミー（P. holttumii）', 'マダガスカリエンセ（P. madagascariense）', 'ワリッキー（P. wallichii）'
-      ].map(function (v) { return '<option value="' + h(v) + '">'; }).join('') + '</datalist></div>' +
+      ]).map(function (v) { return '<option value="' + h(v) + '">'; }).join('') + '</datalist>' +
+      '<div class="hint">候補から選ぶか、リストにない品種（オリジナル株など）もそのまま入力できます。一度入れた品種は次から候補に出ます。</div></div>' +
       '<div class="field"><label for="f-location">置き場所</label><input class="input" id="f-location" name="location" value="' + h(d.location) + '" placeholder="例：東の窓辺"></div>' +
       '<div class="field"><span class="label">仕立て</span><div class="seg" role="radiogroup">' + Object.keys(S.STYLES).map(function (k) {
         return '<button type="button" role="radio" aria-checked="' + (d.style === k) + '" class="' + (d.style === k ? 'active' : '') + '" data-style="' + k + '">' + S.STYLES[k] + '</button>';

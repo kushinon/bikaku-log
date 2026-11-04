@@ -488,3 +488,19 @@ test('バックアップ：すべての記録と株の一覧を CSV で保存で
   assert.match(plants, /リドレイ,P\. ridleyi,浴室の近く,ハンギング,もうすぐ/);
   assert.deepEqual(page.errors, []);
 });
+
+test('品種：リストにない品種も手で入力でき、次から候補に出る', async (t) => {
+  const { ctx, page } = await openApp(web, { demo: true });
+  t.after(() => ctx.close());
+  await page.waitForSelector('.card');
+  await page.goto(web.url + '#/edit/new');
+  await page.fill('#f-name', 'オリジナル1号');
+  await page.fill('#f-variety', 'P. ‘Kushino Original’');
+  await page.click('button[type=submit]');
+  await page.waitForSelector('.plant-title');
+  assert.match(await page.locator('.plant-variety').textContent(), /Kushino Original/);
+  await page.goto(web.url + '#/edit/new');
+  const options = await page.locator('#variety-list option').evaluateAll(os => os.map(o => o.value));
+  assert.equal(options.includes('P. ‘Kushino Original’'), true);
+  assert.equal(options.filter(v => v === 'P. ‘Kushino Original’').length, 1);
+});
