@@ -504,3 +504,12 @@ test('品種：リストにない品種も手で入力でき、次から候補�
   assert.equal(options.includes('P. ‘Kushino Original’'), true);
   assert.equal(options.filter(v => v === 'P. ‘Kushino Original’').length, 1);
 });
+
+test('原種の解説：品種が原種（または園芸品種）なら、詳細画面に解説が出る', async (t) => {
+  const { ctx, page } = await openApp(web, { demo: true });
+  t.after(() => ctx.close());
+  await page.waitForSelector('.card');
+  await page.locator('.card-main', { hasText: 'リドレイ' }).click();
+  await page.waitForSelector('.panel.species');
+  assert.match(await page.locator('.panel.species').textContent(), /リドレイ（P\. ridleyi）について原産地：マレー半島/);
+});

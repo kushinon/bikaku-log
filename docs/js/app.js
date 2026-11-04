@@ -9,7 +9,7 @@
   'use strict';
 
   var S = BikakuShared;
-  var APP_VERSION = '1.8.1';
+  var APP_VERSION = '1.9.0';
   var CONFIG_KEY = 'bikaku.config';
   var PHOTO_MAX_CHARS = 45000;   // スプレッドシートの1セルに入る大きさに収める
   var SYNC_INTERVAL = 60 * 1000;
@@ -760,6 +760,13 @@
     html += '<button class="btn ghost block" data-go="import/' + h(encodeURIComponent(p.id)) + '">メモからまとめて取り込む</button>';
     html += '</section>';
     if (p.memo) html += '<section class="panel"><h2>メモ</h2><div class="memo">' + h(p.memo) + '</div></section>';
+    var sp = BikakuSpecies.find(p.variety);
+    if (sp) {
+      html += '<section class="panel species"><h2>📖 ' + h(sp.ja) + '（P. ' + h(sp.latin) + '）について</h2>' +
+        '<p><b>原産地：</b>' + h(sp.origin) + '</p>' +
+        '<p>' + h(sp.feature) + '</p><p>' + h(sp.care) + '</p>' +
+        '<p class="note">一般的に知られている特徴です。株や置き場所によって違うことがあります。</p></section>';
+    }
     html += '</main>';
     app.innerHTML = html;
     drawChart($('#chart'), sorted, j, viewState.chartRange);
